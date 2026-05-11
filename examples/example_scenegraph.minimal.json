@@ -1,0 +1,39 @@
+{
+  "image_id": "example_002.jpg",
+  "modality": "RGB",
+  "scene": {
+    "setting": "indoor",
+    "lighting": "ambient",
+    "terrain": "floor",
+    "hazards": [],
+    "nearby_persons":  {"count": 0, "details": ""},
+    "nearby_vehicles": {"count": 0, "details": ""},
+    "medical_devices_visible": [],
+    "threats_visible": [],
+    "obstacles": []
+  },
+  "primary_subject": {
+    "gt_bbox":        [0, 0, 100, 100],
+    "predicted_bbox": [0, 0, 100, 100],
+    "predicted_bbox_confidence": "low",
+    "img_w": 640,
+    "img_h": 480,
+    "posture_prose": "",
+    "ambulatory": "unknown",
+    "emt_assessment_prose": "",
+    "blood_pool":   {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "standing":     {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "prone_back":   {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "prone_face":   {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "side_lying":   {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "sit_supp":     {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "sit_unsupp":   {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "tripod_pos":   {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "amp_leg":      {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "amp_arm":      {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "protect_hand": {"verdict": "unknown", "confidence": "low", "evidence": ""},
+    "is_medic":     {"verdict": "unknown", "confidence": "low", "evidence": ""}
+  },
+  "secondary_entities": [],
+  "relations": []
+}

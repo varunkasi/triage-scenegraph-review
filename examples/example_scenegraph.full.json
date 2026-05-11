@@ -1,0 +1,48 @@
+{
+  "image_id": "example_001.jpg",
+  "modality": "RGB",
+  "scene": {
+    "setting": "outdoor wooded clearing, daytime",
+    "lighting": "bright daylight, partial shade",
+    "terrain": "dirt with sparse grass and scattered debris",
+    "hazards": ["loose debris", "uneven ground"],
+    "nearby_persons":  {"count": 1, "details": "one person kneeling above the primary subject, appears to be providing aid"},
+    "nearby_vehicles": {"count": 0, "details": "none visible"},
+    "medical_devices_visible": ["medical gauze", "tourniquet"],
+    "threats_visible": [],
+    "obstacles": ["fallen branches", "rocks"]
+  },
+  "primary_subject": {
+    "gt_bbox":        [666, 442, 1352, 772],
+    "predicted_bbox": [668, 405, 1350, 725],
+    "predicted_bbox_confidence": "high",
+    "img_w": 1920,
+    "img_h": 1080,
+    "posture_prose": "subject is supine on the ground; right leg extended at unnatural angle suggesting possible fracture",
+    "ambulatory": "no",
+    "emt_assessment_prose": "Non-ambulatory subject with possible long-bone injury; visible pooled fluid beneath right thigh consistent with active bleeding. Urgency: high.",
+
+    "blood_pool":   {"verdict": "yes",     "confidence": "high",   "evidence": "dark pooled stain visible on the ground beneath the right thigh"},
+    "standing":     {"verdict": "no",      "confidence": "high",   "evidence": "subject is on the ground, not upright"},
+    "prone_back":   {"verdict": "yes",     "confidence": "medium", "evidence": "torso is oriented face-up; chest is visible to the camera"},
+    "prone_face":   {"verdict": "no",      "confidence": "high",   "evidence": "face is visible toward the camera, not down"},
+    "side_lying":   {"verdict": "no",      "confidence": "high",   "evidence": "subject is squarely on their back, not on a side"},
+    "sit_supp":     {"verdict": "no",      "confidence": "high",   "evidence": "subject is lying down, not seated"},
+    "sit_unsupp":   {"verdict": "no",      "confidence": "high",   "evidence": "subject is lying down, not seated"},
+    "tripod_pos":   {"verdict": "no",      "confidence": "high",   "evidence": "no tripod stance visible; subject is supine"},
+    "amp_leg":      {"verdict": "no",      "confidence": "medium", "evidence": "both legs visible, though right is angled"},
+    "amp_arm":      {"verdict": "unknown", "confidence": "low",    "evidence": "left arm partially occluded by debris"},
+    "protect_hand": {"verdict": "no",      "confidence": "medium", "evidence": "hands are at sides, not raised toward any wound"},
+    "is_medic":     {"verdict": "no",      "confidence": "high",   "evidence": "subject posture is casualty, not provider"}
+  },
+  "secondary_entities": [
+    {"id": "p2", "type": "person",  "count": 1, "relation": "kneeling 1m to the right of primary, facing primary",
+     "attrs": {"posture": "kneeling", "ambulatory": "yes", "role": "responder"}},
+    {"id": "o1", "type": "object",  "count": 1, "relation": "next to primary's right hand",
+     "attrs": {"category": "medical_kit"}}
+  ],
+  "relations": [
+    {"from": "p2",      "rel": "tending_to", "to": "primary"},
+    {"from": "primary", "rel": "near",       "to": "o1"}
+  ]
+}
