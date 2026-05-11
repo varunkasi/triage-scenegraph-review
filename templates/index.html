@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scenegraph Review</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#e2e8f0;font-size:14px;line-height:1.45}
+button,input,select,textarea{font:inherit;color:inherit;border:1px solid #334155;background:#0b1220;padding:4px 8px;border-radius:4px}
+button{cursor:pointer;background:#1e3a8a;border-color:#1e3a8a}
+button:hover{background:#1d4ed8}
+button.secondary{background:transparent}
+button.danger{background:transparent;color:#f87171;border-color:#7f1d1d}
+input[readonly]{color:#94a3b8;background:#0a0f1c}
+textarea{width:100%;min-height:48px;resize:vertical;font-family:inherit}
+
+/* Login */
+.login-overlay{position:fixed;inset:0;background:#0f172a;display:flex;align-items:center;justify-content:center;z-index:100}
+.login-card{background:#1e293b;padding:32px;border-radius:8px;display:flex;flex-direction:column;gap:12px;width:340px}
+.login-card h2{margin-bottom:8px}
+.err{color:#f87171;font-size:12px;min-height:16px}
+
+/* Main layout */
+.app{display:none;flex-direction:column;height:100vh;overflow:hidden}
+.toolbar{display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #334155;flex-wrap:wrap}
+.toolbar h1{font-size:16px;font-weight:600;color:#fbbf24;flex:0 0 auto}
+.toolbar .grow{flex:1}
+.toolbar .idx{color:#94a3b8;font-size:13px}
+.toolbar label{display:flex;align-items:center;gap:6px;color:#94a3b8;cursor:pointer}
+.toolbar .saved{color:#4ade80;font-size:12px;opacity:0;transition:opacity .25s}
+.toolbar .saved.show{opacity:1}
+
+/* Gallery */
+.gallery{display:flex;gap:6px;padding:8px;overflow-x:auto;border-bottom:1px solid #334155;background:#0b1220}
+.thumb{flex:0 0 auto;width:120px;height:80px;border-radius:4px;border:2px solid transparent;cursor:pointer;overflow:hidden;background:#000;position:relative}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block}
+.thumb.selected{border-color:#fbbf24}
+.thumb.no-sg::after{content:"no SG";position:absolute;bottom:2px;right:2px;background:#7f1d1d;color:#fecaca;font-size:10px;padding:1px 4px;border-radius:2px}
+.thumb-num{position:absolute;top:2px;left:2px;background:#0008;color:#fff;font-size:10px;padding:1px 4px;border-radius:2px}
+
+/* Main area: image left, form right */
+.main{flex:1;display:grid;grid-template-columns:1fr 1.5fr;gap:0;overflow:hidden}
+.image-panel{padding:12px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+.image-wrap{flex:1;background:#000;border-radius:4px;display:flex;align-items:center;justify-content:center;min-height:0}
+.image-wrap svg, .image-wrap img{max-width:100%;max-height:100%;display:block}
+.imageinfo{color:#94a3b8;font-size:12px}
+
+.form-panel{padding:12px;overflow:auto}
+.form-panel h2{font-size:13px;margin:14px 0 6px;color:#38bdf8;text-transform:uppercase;letter-spacing:.6px;border-bottom:1px solid #1e3a5f;padding-bottom:4px}
+.form-panel h2:first-child{margin-top:0}
+.row{display:grid;grid-template-columns:140px 1fr;gap:8px;margin:4px 0;align-items:start}
+.row .lbl{color:#94a3b8;padding-top:5px;font-size:12px}
+.row input, .row select, .row textarea{width:100%}
+.bbox-row input{width:60px;display:inline-block;margin-right:4px}
+.verdict{display:grid;grid-template-columns:130px 80px 80px 1fr;gap:6px;margin:3px 0;align-items:start}
+.verdict .name{color:#fde68a;padding-top:5px;font-size:12px;font-weight:500}
+.verdict textarea{min-height:36px}
+.array-row{border:1px solid #1e293b;border-radius:4px;padding:8px;margin:6px 0;background:#0c1424;position:relative}
+.array-row .rm{position:absolute;top:6px;right:6px}
+.array-row .grid{display:grid;grid-template-columns:80px 110px 70px 1fr;gap:6px;margin-bottom:6px;align-items:center}
+.array-row textarea{min-height:32px}
+.add{margin-top:6px}
+
+/* Statusbar */
+.status{padding:6px 12px;border-top:1px solid #334155;background:#0b1220;color:#94a3b8;font-size:12px;display:flex;gap:18px;flex-wrap:wrap}
+.status code{color:#fde68a}
+.dim{color:#64748b}
+.legend-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 12px;border-bottom:1px solid #1e293b;background:#0a0f1c;font-size:12px;color:#94a3b8}
+.legend-bar .chip{padding:2px 8px;border-radius:10px;background:#1e293b;border:1px solid #334155;white-space:nowrap}
+.legend-bar .chip.box-gt{color:#22c55e;border-color:#16653480}
+.legend-bar .chip.box-pr{color:#ec4899;border-color:#9d174d80}
+.legend-bar .chip.ok{background:#064e3b66;color:#a7f3d0;border-color:#065f4699}
+.legend-bar .chip.bad{background:#7f1d1d66;color:#fecaca;border-color:#991b1b99}
+.legend-bar .chip.mix{background:#78350f66;color:#fde68a;border-color:#92400e99}
+.legend-bar .chip.muted{background:#1e293b;color:#64748b;border-color:#334155}
+.legend-bar .sep{color:#475569}
+.legend-bar code{background:#0b1220;padding:0 4px;border-radius:3px;color:#cbd5e1;font-size:11px}
+.verdict{grid-template-columns:130px 80px 80px 1fr 130px}
+.verdict.row-ok{background:#064e3b1f}
+.verdict.row-bad{background:#7f1d1d1f}
+.verdict.row-mix{background:#78350f1f}
+.gold-pills{display:flex;flex-wrap:wrap;gap:3px;align-items:flex-start;padding-top:4px}
+.pill{font-size:10px;padding:1px 5px;border-radius:8px;border:1px solid #334155;background:#0b1220;color:#94a3b8;white-space:nowrap;font-family:ui-monospace,monospace}
+.pill.match{background:#064e3b88;color:#a7f3d0;border-color:#065f4699}
+.pill.miss{background:#7f1d1d88;color:#fecaca;border-color:#991b1b99}
+.pill.skip{background:#1e293b;color:#64748b}
+</style>
+</head>
+<body>
+
+<div class="login-overlay" id="loginOverlay">
+  <div class="login-card">
+    <h2>Scenegraph Review</h2>
+    <p class="dim">Enter access code to continue</p>
+    <input type="password" id="codeInput" placeholder="Access code" autofocus>
+    <button id="loginBtn">Sign in</button>
+    <div class="err" id="loginErr"></div>
+  </div>
+</div>
+
+<div class="app" id="app">
+  <div class="toolbar">
+    <h1>Scenegraph Review</h1>
+    <span class="idx" id="idxLabel">– / –</span>
+    <button id="prevBtn" class="secondary">← Prev</button>
+    <button id="nextBtn" class="secondary">Next →</button>
+    <span class="grow"></span>
+    <label title="Toggle gemma's predicted bbox (magenta dashed) overlay on top of the image. The green GT box is always burned into the JPG."><input type="checkbox" id="overlayToggle"> show predicted bbox (magenta dashed)</label>
+    <button id="saveBtn">Save</button>
+    <button id="downloadBtn" class="secondary" title="Download the current image's JSON (uses unsaved edits if any)">Download current</button>
+    <button id="downloadAllBtn" class="secondary" title="Download all 106 saved scenegraphs as NDJSON (reflects on-disk saved state, not in-flight edits)">Download all (NDJSON)</button>
+    <span class="saved" id="savedTag">saved ✓</span>
+  </div>
+
+    <div class="legend-bar" id="legendBar">
+    <span class="chip box-gt">■ GT bbox (green, burned into image)</span>
+    <span class="chip box-pr">▤ predicted bbox (magenta dashed, toggle above)</span>
+    <span class="sep">•</span>
+    <span class="chip ok">verdict matches expert(s)</span>
+    <span class="chip bad">verdict differs from expert(s)</span>
+    <span class="chip mix">experts disagree / gemma=unknown</span>
+    <span class="chip muted">no expert label</span>
+    <span class="sep">•</span>
+    <span class="chip">expert pills: <code>E1:Y✓</code> = expert_01 said Yes (matches gemma), <code>E1:Y✗</code> = differs</span>
+  </div>
+  <div class="gallery" id="gallery"></div>
+
+  <div class="main">
+    <div class="image-panel">
+      <div class="image-wrap" id="imageWrap"></div>
+      <div class="imageinfo" id="imageInfo"></div>
+    </div>
+    <div class="form-panel" id="formPanel">
+      <p class="dim">Loading…</p>
+    </div>
+  </div>
+
+  <div class="status" id="statusBar">
+    <span>file: <code id="stFile">—</code></span>
+    <span>modality: <code id="stMod">—</code></span>
+    <span>iou(gt,pred): <code id="stIou">—</code></span>
+    <span>idx: <code id="stIdx">—</code></span>
+  </div>
+</div>
+
+<script>
+const SHORT_KEYS = ["blood_pool","standing","prone_back","prone_face","side_lying","sit_supp","sit_unsupp","tripod_pos","amp_leg","amp_arm","protect_hand","is_medic"];
+const VERDICTS = ["yes","no","unknown"];
+const CONFS = ["low","medium","high"];
+const ENT_TYPES = ["person","vehicle","object","threat","structure","animal"];
+const MODES = ["RGB","IR"];
+const AMB = ["yes","no","unknown"];
+
+let images = [];     // [{image_id, has_scenegraph}]
+let currentGold = null;   // {short_key: {expert_id: "Yes"|"No"}}
+let idx = 0;
+let current = null;  // current scenegraph object
+let dirty = false;
+
+const $ = id => document.getElementById(id);
+
+function iou(a, b){
+  if(!a || !b || a.length<4 || b.length<4) return null;
+  const [ax1,ay1,ax2,ay2]=a,[bx1,by1,bx2,by2]=b;
+  const ix1=Math.max(ax1,bx1), iy1=Math.max(ay1,by1);
+  const ix2=Math.min(ax2,bx2), iy2=Math.min(ay2,by2);
+  const iw=Math.max(0,ix2-ix1), ih=Math.max(0,iy2-iy1);
+  const inter=iw*ih;
+  const ua=(ax2-ax1)*(ay2-ay1)+(bx2-bx1)*(by2-by1)-inter;
+  return ua>0 ? inter/ua : 0;
+}
+
+async function api(path, opts={}){
+  const r = await fetch(path, {credentials:"same-origin", ...opts});
+  if(r.status===401){ showLogin(); throw new Error("unauth"); }
+  return r;
+}
+
+function showLogin(){ $("loginOverlay").style.display="flex"; $("app").style.display="none"; }
+function hideLogin(){ $("loginOverlay").style.display="none"; $("app").style.display="flex"; }
+
+$("loginBtn").addEventListener("click", login);
+$("codeInput").addEventListener("keydown", e => { if(e.key==="Enter") login(); });
+async function login(){
+  const code = $("codeInput").value.trim();
+  $("loginErr").textContent = "";
+  const r = await fetch("/api/auth", {method:"POST", credentials:"same-origin", headers:{"Content-Type":"application/json"}, body:JSON.stringify({access_code:code})});
+  if(!r.ok){ $("loginErr").textContent = "Invalid code"; return; }
+  hideLogin(); init();
+}
+
+async function init(){
+  const r = await api("/api/list2");
+  if(!r.ok){ return; }
+  images = await r.json();
+  renderGallery();
+  if(images.length){
+    // pick first image with scenegraph
+    let first = images.findIndex(x => x.has_scenegraph);
+    if(first<0) first = 0;
+    select(first);
+  }
+}
+
+function renderGallery(){
+  const g = $("gallery"); g.innerHTML="";
+  images.forEach((it, i) => {
+    const d = document.createElement("div");
+    d.className = "thumb" + (it.has_scenegraph ? "" : " no-sg");
+    d.innerHTML = `<span class="thumb-num">${i+1}</span><img loading="lazy" src="/api/thumb/${encodeURIComponent(it.image_id)}">`;
+    d.addEventListener("click", () => select(i));
+    g.appendChild(d);
+  });
+}
+
+function highlightThumb(){
+  const thumbs = $("gallery").children;
+  for(let i=0;i<thumbs.length;i++) thumbs[i].classList.toggle("selected", i===idx);
+  thumbs[idx]?.scrollIntoView({inline:"center", block:"nearest", behavior:"smooth"});
+}
+
+async function select(i){
+  if(dirty && !confirm("You have unsaved edits. Discard?")) return;
+  dirty = false;
+  idx = Math.max(0, Math.min(images.length-1, i));
+  highlightThumb();
+  const it = images[idx];
+  $("idxLabel").textContent = `${idx+1} / ${images.length}`;
+  $("stIdx").textContent = `${idx+1} / ${images.length}`;
+  $("stFile").textContent = it.image_id;
+  if(!it.has_scenegraph){
+    current = null;
+    $("formPanel").innerHTML = `<p class="dim">No scenegraph yet for this image (full inference run is still in progress).</p>`;
+    renderImageOnly(it.image_id);
+    $("stMod").textContent = "—"; $("stIou").textContent = "—";
+    return;
+  }
+  const [r, gr] = await Promise.all([
+    api(`/api/sg/${encodeURIComponent(it.image_id)}`),
+    api(`/api/gold/${encodeURIComponent(it.image_id)}`).catch(() => null),
+  ]);
+  if(!r.ok){ return; }
+  current = await r.json();
+  currentGold = (gr && gr.ok) ? await gr.json() : {};
+  renderImage();
+  renderForm();
+}
+
+function renderImageOnly(imgId){
+  $("imageWrap").innerHTML = `<img src="/api/image/${encodeURIComponent(imgId)}" alt="${imgId}">`;
+  $("imageInfo").textContent = "(no scenegraph)";
+}
+
+function renderImage(){
+  const ps = current.primary_subject;
+  const w = ps.img_w, h = ps.img_h;
+  const showOverlay = $("overlayToggle").checked;
+  const gt = ps.gt_bbox || [0,0,0,0];
+  const pr = ps.predicted_bbox || [0,0,0,0];
+  const i = iou(gt, pr); $("stIou").textContent = i==null?"—":i.toFixed(3);
+  $("stMod").textContent = current.modality;
+  if(showOverlay){
+    $("imageWrap").innerHTML = `
+      <svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%">
+        <image href="/api/image/${encodeURIComponent(current.image_id)}" width="${w}" height="${h}"/>
+        <rect x="${gt[0]}" y="${gt[1]}" width="${gt[2]-gt[0]}" height="${gt[3]-gt[1]}" stroke="#22c55e" stroke-width="3" fill="none"/>
+        <rect x="${pr[0]}" y="${pr[1]}" width="${pr[2]-pr[0]}" height="${pr[3]-pr[1]}" stroke="#ec4899" stroke-width="3" stroke-dasharray="6,4" fill="none"/>
+      </svg>`;
+  } else {
+    $("imageWrap").innerHTML = `<img src="/api/image/${encodeURIComponent(current.image_id)}">`;
+  }
+  $("imageInfo").textContent = `gt=${JSON.stringify(gt)}  predicted=${JSON.stringify(pr)} (${ps.predicted_bbox_confidence})  iou=${i==null?"—":i.toFixed(3)}`;
+}
+
+$("overlayToggle").addEventListener("change", () => { if(current) renderImage(); });
+
+function dirtyOn(){ dirty = true; $("savedTag").classList.remove("show"); }
+
+function tag(name, attrs={}, children=""){
+  const e = document.createElement(name);
+  for(const [k,v] of Object.entries(attrs)){
+    if(k==="class") e.className = v;
+    else if(k==="value" && (e.tagName==="INPUT"||e.tagName==="TEXTAREA"||e.tagName==="SELECT")) e.value = v;
+    else e.setAttribute(k, v);
+  }
+  if(typeof children === "string") e.innerHTML = children;
+  else if(Array.isArray(children)) children.forEach(c => e.appendChild(c));
+  return e;
+}
+
+function selOpts(opts, sel){
+  return opts.map(o => `<option value="${o}"${o===sel?" selected":""}>${o}</option>`).join("");
+}
+
+function renderForm(){
+  const fp = $("formPanel");
+  fp.innerHTML = "";
+  const sg = current;
+  const ps = sg.primary_subject;
+  const sc = sg.scene;
+
+  // Top-level
+  fp.appendChild(tag("h2", {}, "Top-level"));
+  fp.appendChild(rowField("image_id", "input", sg.image_id, {readonly:true}));
+  fp.appendChild(rowField("modality", "select", sg.modality, {options:MODES, path:"modality"}));
+
+  // Scene
+  fp.appendChild(tag("h2", {}, "Scene"));
+  fp.appendChild(rowField("setting",  "input",    sc.setting,  {path:"scene.setting"}));
+  fp.appendChild(rowField("lighting", "input",    sc.lighting, {path:"scene.lighting"}));
+  fp.appendChild(rowField("terrain",  "input",    sc.terrain,  {path:"scene.terrain"}));
+  fp.appendChild(rowField("hazards (one per line)", "textarea", (sc.hazards||[]).join("\n"), {path:"scene.hazards", isArray:true}));
+  fp.appendChild(rowField("nearby_persons.count",  "number",   sc.nearby_persons?.count ?? 0,  {path:"scene.nearby_persons.count"}));
+  fp.appendChild(rowField("nearby_persons.details","input",    sc.nearby_persons?.details ?? "",{path:"scene.nearby_persons.details"}));
+  fp.appendChild(rowField("nearby_vehicles.count", "number",   sc.nearby_vehicles?.count ?? 0, {path:"scene.nearby_vehicles.count"}));
+  fp.appendChild(rowField("nearby_vehicles.details","input",   sc.nearby_vehicles?.details ?? "",{path:"scene.nearby_vehicles.details"}));
+  fp.appendChild(rowField("medical_devices_visible","textarea",(sc.medical_devices_visible||[]).join("\n"),{path:"scene.medical_devices_visible", isArray:true}));
+  fp.appendChild(rowField("threats_visible","textarea",(sc.threats_visible||[]).join("\n"),{path:"scene.threats_visible", isArray:true}));
+  fp.appendChild(rowField("obstacles","textarea",(sc.obstacles||[]).join("\n"),{path:"scene.obstacles", isArray:true}));
+
+  // Primary subject
+  fp.appendChild(tag("h2", {}, "Primary Subject"));
+  fp.appendChild(rowField("gt_bbox", "input", JSON.stringify(ps.gt_bbox), {readonly:true}));
+  fp.appendChild(bboxRow("predicted_bbox", ps.predicted_bbox, "primary_subject.predicted_bbox"));
+  fp.appendChild(rowField("predicted_bbox_confidence", "select", ps.predicted_bbox_confidence, {options:CONFS, path:"primary_subject.predicted_bbox_confidence"}));
+  fp.appendChild(rowField("img_w", "input", ps.img_w, {readonly:true}));
+  fp.appendChild(rowField("img_h", "input", ps.img_h, {readonly:true}));
+  fp.appendChild(rowField("posture_prose", "textarea", ps.posture_prose, {path:"primary_subject.posture_prose"}));
+  fp.appendChild(rowField("ambulatory", "select", ps.ambulatory, {options:AMB, path:"primary_subject.ambulatory"}));
+  fp.appendChild(rowField("emt_assessment_prose", "textarea", ps.emt_assessment_prose, {path:"primary_subject.emt_assessment_prose"}));
+
+  // 12 verdicts
+  fp.appendChild(tag("h2", {}, "DTC Scoring Verdicts"));
+  for(const sk of SHORT_KEYS){
+    fp.appendChild(verdictRow(sk, ps[sk]));
+  }
+
+  // Secondary entities
+  fp.appendChild(tag("h2", {}, "Secondary Entities"));
+  const seWrap = tag("div", {id:"seWrap"});
+  fp.appendChild(seWrap);
+  (sg.secondary_entities||[]).forEach((e, i) => seWrap.appendChild(entityRow(e, i)));
+  const addEnt = tag("button", {class:"add"}, "+ Add entity");
+  addEnt.addEventListener("click", () => {
+    sg.secondary_entities = sg.secondary_entities || [];
+    const i = sg.secondary_entities.length;
+    sg.secondary_entities.push({id:`e${i+1}`, type:"object", count:1, relation:"", attrs:{}});
+    seWrap.appendChild(entityRow(sg.secondary_entities[i], i));
+    dirtyOn();
+  });
+  fp.appendChild(addEnt);
+
+  // Relations
+  fp.appendChild(tag("h2", {}, "Relations"));
+  const rWrap = tag("div", {id:"rWrap"});
+  fp.appendChild(rWrap);
+  (sg.relations||[]).forEach((r, i) => rWrap.appendChild(relationRow(r, i)));
+  const addRel = tag("button", {class:"add"}, "+ Add relation");
+  addRel.addEventListener("click", () => {
+    sg.relations = sg.relations || [];
+    const i = sg.relations.length;
+    sg.relations.push({from:"primary", rel:"", to:""});
+    rWrap.appendChild(relationRow(sg.relations[i], i));
+    dirtyOn();
+  });
+  fp.appendChild(addRel);
+}
+
+function rowField(label, kind, value, opts={}){
+  let inp;
+  if(kind==="select"){
+    inp = tag("select", {}, selOpts(opts.options, value));
+  } else if(kind==="textarea"){
+    inp = tag("textarea", {value:String(value??"")});
+  } else {
+    inp = tag("input", {type: kind==="number"?"number":"text", value:String(value??"")});
+  }
+  if(opts.readonly){ inp.readOnly = true; }
+  if(opts.path){
+    inp.addEventListener("input",  () => { setPath(current, opts.path, opts.isArray ? inp.value.split("\n").map(s=>s.trim()).filter(Boolean) : (kind==="number"?Number(inp.value)||0:inp.value)); dirtyOn(); });
+    inp.addEventListener("change", () => { setPath(current, opts.path, opts.isArray ? inp.value.split("\n").map(s=>s.trim()).filter(Boolean) : (kind==="number"?Number(inp.value)||0:inp.value)); dirtyOn(); });
+  }
+  return tag("div", {class:"row"}, [tag("div",{class:"lbl"},label), inp]);
+}
+
+function bboxRow(label, value, path){
+  const arr = (value && value.length===4) ? value : [0,0,0,0];
+  const wrap = tag("div", {class:"bbox-row"});
+  for(let i=0;i<4;i++){
+    const inp = tag("input", {type:"number", value:String(arr[i]??0)});
+    inp.addEventListener("input", () => { arr[i] = Number(inp.value)||0; setPath(current, path, [...arr]); dirtyOn(); });
+    wrap.appendChild(inp);
+  }
+  return tag("div", {class:"row"}, [tag("div",{class:"lbl"},label), wrap]);
+}
+
+function verdictRow(name, v){
+  const sel  = tag("select",   {}, selOpts(VERDICTS, v.verdict));
+  const conf = tag("select",   {}, selOpts(CONFS, v.confidence));
+  const ev   = tag("textarea", {value:v.evidence||""});
+  sel.addEventListener("change",  () => { v.verdict   = sel.value; recolorVerdictRow(name); dirtyOn(); });
+  conf.addEventListener("change", () => { v.confidence= conf.value; dirtyOn(); });
+  ev.addEventListener("input",    () => { v.evidence  = ev.value;  dirtyOn(); });
+
+  const pills = tag("div", {class:"gold-pills", id:`gp-${name}`});
+  const goldEntries = (currentGold && currentGold[name]) ? Object.entries(currentGold[name]) : [];
+  buildPillsInto(pills, goldEntries, v.verdict);
+
+  const row = tag("div", {class:"verdict", id:`vrow-${name}`}, [tag("div",{class:"name"},name), sel, conf, ev, pills]);
+  applyRowTint(row, goldEntries, v.verdict);
+  return row;
+}
+
+function buildPillsInto(container, goldEntries, gemmaVerdict){
+  container.innerHTML = "";
+  if(!goldEntries.length){
+    container.appendChild(tag("span", {class:"pill skip"}, "no gold"));
+    return;
+  }
+  const gv = (gemmaVerdict || "").toLowerCase();
+  goldEntries.forEach(([eid, val]) => {
+    const eShort = eid.replace("expert_0", "E").replace("expert_", "E");
+    const matches = (gv === val.toLowerCase());
+    const cls = (gv === "unknown") ? "skip" : (matches ? "match" : "miss");
+    const sym = (gv === "unknown") ? "—" : (matches ? "✓" : "✗");
+    const pill = tag("span", {class:`pill ${cls}`, title:`${eid}: ${val}`}, `${eShort}:${val[0]}${sym}`);
+    container.appendChild(pill);
+  });
+}
+
+function applyRowTint(row, goldEntries, gemmaVerdict){
+  row.classList.remove("row-ok","row-bad","row-mix");
+  if(!goldEntries.length) return;
+  if(gemmaVerdict === "unknown"){ row.classList.add("row-mix"); return; }
+  const gv = gemmaVerdict.toLowerCase();
+  const matches = goldEntries.filter(([_,v]) => v.toLowerCase() === gv).length;
+  const misses  = goldEntries.length - matches;
+  if(misses === 0)        row.classList.add("row-ok");
+  else if(matches === 0)  row.classList.add("row-bad");
+  else                    row.classList.add("row-mix");
+}
+
+function recolorVerdictRow(name){
+  if(!current) return;
+  const v = current.primary_subject[name];
+  const goldEntries = (currentGold && currentGold[name]) ? Object.entries(currentGold[name]) : [];
+  const pills = document.getElementById(`gp-${name}`);
+  const row   = document.getElementById(`vrow-${name}`);
+  if(pills) buildPillsInto(pills, goldEntries, v.verdict);
+  if(row)   applyRowTint(row, goldEntries, v.verdict);
+}
+
+function entityRow(e, i){
+  const grid = tag("div", {class:"grid"});
+  const id = tag("input", {type:"text", value:e.id||""});
+  id.addEventListener("input", () => { e.id = id.value; dirtyOn(); });
+  const ty = tag("select", {}, selOpts(ENT_TYPES, e.type));
+  ty.addEventListener("change", () => { e.type = ty.value; dirtyOn(); });
+  const cnt = tag("input", {type:"number", value:String(e.count||1), min:"0"});
+  cnt.addEventListener("input", () => { e.count = Number(cnt.value)||1; dirtyOn(); });
+  const rel = tag("input", {type:"text", value:e.relation||"", placeholder:"spatial relation"});
+  rel.addEventListener("input", () => { e.relation = rel.value; dirtyOn(); });
+  grid.appendChild(tag("div",{},`<span class="lbl">id</span>`)); grid.appendChild(id);
+  grid.appendChild(tag("div",{},`<span class="lbl">type</span>`)); grid.appendChild(ty);
+  grid.appendChild(tag("div",{},`<span class="lbl">count</span>`)); grid.appendChild(cnt);
+  grid.appendChild(tag("div",{},`<span class="lbl">relation</span>`)); grid.appendChild(rel);
+
+  const attrs = tag("textarea", {value:JSON.stringify(e.attrs||{}, null, 2)});
+  attrs.addEventListener("input", () => {
+    try { e.attrs = JSON.parse(attrs.value); attrs.style.borderColor = "#334155"; }
+    catch { attrs.style.borderColor = "#7f1d1d"; }
+    dirtyOn();
+  });
+
+  const rm = tag("button", {class:"rm danger"}, "× remove");
+  rm.addEventListener("click", () => {
+    current.secondary_entities.splice(current.secondary_entities.indexOf(e), 1);
+    renderForm(); dirtyOn();
+  });
+
+  const r = tag("div", {class:"array-row"}, [grid, tag("div",{class:"lbl"},"attrs (JSON)"), attrs, rm]);
+  return r;
+}
+
+function relationRow(rel, i){
+  const grid = tag("div", {class:"grid"});
+  const f = tag("input", {type:"text", value:rel.from||""});
+  const k = tag("input", {type:"text", value:rel.rel||""});
+  const t = tag("input", {type:"text", value:rel.to||""});
+  f.addEventListener("input", () => { rel.from = f.value; dirtyOn(); });
+  k.addEventListener("input", () => { rel.rel  = k.value; dirtyOn(); });
+  t.addEventListener("input", () => { rel.to   = t.value; dirtyOn(); });
+  grid.appendChild(tag("div",{},`<span class="lbl">from</span>`)); grid.appendChild(f);
+  grid.appendChild(tag("div",{},`<span class="lbl">rel</span>`));  grid.appendChild(k);
+  grid.appendChild(tag("div",{},`<span class="lbl">to</span>`));    grid.appendChild(t);
+  const rm = tag("button", {class:"rm danger"}, "× remove");
+  rm.addEventListener("click", () => {
+    current.relations.splice(current.relations.indexOf(rel), 1);
+    renderForm(); dirtyOn();
+  });
+  return tag("div", {class:"array-row"}, [grid, rm]);
+}
+
+function setPath(obj, path, value){
+  const parts = path.split(".");
+  let o = obj;
+  for(let i=0;i<parts.length-1;i++){
+    if(o[parts[i]] == null) o[parts[i]] = {};
+    o = o[parts[i]];
+  }
+  o[parts[parts.length-1]] = value;
+}
+
+$("saveBtn").addEventListener("click", async () => {
+  if(!current) return;
+  const r = await api(`/api/sg/${encodeURIComponent(current.image_id)}`, {
+    method:"PUT", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify(current),
+  });
+  if(r.ok){
+    dirty = false;
+    $("savedTag").classList.add("show");
+    setTimeout(()=>$("savedTag").classList.remove("show"), 1500);
+  } else {
+    alert("Save failed: " + r.status);
+  }
+});
+
+$("downloadBtn").addEventListener("click", () => {
+  if(!current) return;
+  const blob = new Blob([JSON.stringify(current, null, 2)], {type:"application/json"});
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${current.image_id}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("downloadAllBtn").addEventListener("click", async () => {
+  if(dirty){
+    if(!confirm("You have unsaved edits on the current image. They will NOT be included in the bundle (only on-disk saved state is bundled). Continue anyway?")) return;
+  }
+  // Hit the endpoint and download via blob URL (so the cookie is sent and we keep a clean filename)
+  const r = await api("/api/download_all");
+  if(!r.ok){ alert("Download failed: " + r.status); return; }
+  const blob = await r.blob();
+  const cd = r.headers.get("Content-Disposition") || "";
+  const m = cd.match(/filename="([^"]+)"/);
+  const filename = m ? m[1] : "scenegraphs.ndjson";
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+$("prevBtn").addEventListener("click", () => select(idx-1));
+$("nextBtn").addEventListener("click", () => select(idx+1));
+
+document.addEventListener("keydown", e => {
+  if(["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) return;
+  if(e.key === "ArrowLeft")  { select(idx-1); e.preventDefault(); }
+  else if(e.key === "ArrowRight"){ select(idx+1); e.preventDefault(); }
+  else if((e.ctrlKey||e.metaKey) && e.key === "s"){ $("saveBtn").click(); e.preventDefault(); }
+});
+
+window.addEventListener("beforeunload", e => {
+  if(dirty){ e.preventDefault(); e.returnValue = ""; }
+});
+
+// Try whoami via list endpoint; if fails go to login
+fetch("/api/list2", {credentials:"same-origin"}).then(r => {
+  if(r.ok){ hideLogin(); init(); } else { showLogin(); }
+});
+</script>
+</body>
+</html>
