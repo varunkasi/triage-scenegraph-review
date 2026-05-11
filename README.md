@@ -48,68 +48,129 @@ ACCESS_CODE=changeMe venv/bin/python server.py --port 5590
 
 ---
 
-## Data layout
+## Bringing your own data
 
-Everything you bring lives in `data/`:
+The application reads from one folder: `data/`. Everything inside is supplied
+by you. The server auto-creates the four subfolders on first launch if they
+do not exist.
 
 ```
 data/
-├── images/        your JPEGs (one per scenegraph; filename = image_id)
-├── scenegraphs/   your scenegraph JSONs, named `<image_id>.json`
-├── thumbs/        regenerated on demand (240×160 cache); leave empty
-└── backups/       per-save snapshots written by the server; leave empty
+├── images/        your input images        ── you populate
+├── scenegraphs/   your scenegraph JSONs    ── you populate
+├── thumbs/        240×160 cache, auto      ── leave empty; server writes
+└── backups/       per-save snapshots, auto ── leave empty; server writes
 ```
 
-The server matches each `data/scenegraphs/<name>.jpg.json` to its
-`data/images/<name>.jpg`. If a scenegraph references an image that's not
-on disk, the gallery shows it with a "no SG" badge.
+### File-naming contract
 
-## Scenegraph JSON shape
+| For an image                | The scenegraph JSON must be named                        |
+|-----------------------------|----------------------------------------------------------|
+| `data/images/foo.jpg`       | `data/scenegraphs/foo.jpg.json` *(include the `.jpg`)*   |
+| `data/images/abc123.jpg`    | `data/scenegraphs/abc123.jpg.json`                       |
 
-```json
-{
-  "image_id": "example.jpg",
-  "modality": "RGB",
-  "scene": {
-    "setting": "outdoor wooded area",
-    "lighting": "daylight",
-    "terrain": "dirt with sparse grass",
-    "hazards": ["debris"],
-    "nearby_persons":  {"count": 0, "details": "none visible"},
-    "nearby_vehicles": {"count": 0, "details": "none visible"},
-    "medical_devices_visible": [],
-    "threats_visible": [],
-    "obstacles": []
-  },
-  "primary_subject": {
-    "gt_bbox":        [x1, y1, x2, y2],
-    "predicted_bbox": [x1, y1, x2, y2],
-    "predicted_bbox_confidence": "low|medium|high",
-    "img_w": 1920,
-    "img_h": 1080,
-    "posture_prose": "...",
-    "ambulatory": "yes|no|unknown",
-    "emt_assessment_prose": "...",
-    "<short_key_1>": {"verdict": "yes|no|unknown", "confidence": "low|medium|high", "evidence": "..."},
-    "<short_key_2>": { ... },
-    ...
-  },
-  "secondary_entities": [
-    {"id": "e1", "type": "person|vehicle|object|threat|structure|animal",
-     "count": 1, "relation": "...", "attrs": {...}}
-  ],
-  "relations": [
-    {"from": "primary", "rel": "...", "to": "e1"}
-  ]
-}
+**Images must be JPEG with the `.jpg` extension.** Other formats are silently
+ignored by the gallery. Convert with `ffmpeg -i input.png output.jpg` or
+similar if needed.
+
+If a `.jpg` exists without a matching `.jpg.json`, it shows in the gallery
+with a red **no SG** badge — useful for tracking which images still need a
+scenegraph from your generation pipeline.
+
+### Scenegraph JSON: use the templates
+
+Two working examples ship with this repo in `examples/`:
+
+| File                                       | What it is                                                      |
+|--------------------------------------------|-----------------------------------------------------------------|
+| `examples/example_scenegraph.full.json`    | Fully filled-out realistic example. Copy and modify per image.  |
+| `examples/example_scenegraph.minimal.json` | Bare-minimum valid scenegraph — every required field present with safe defaults (`"unknown"`, empty strings/arrays). Useful as a starting skeleton or for programmatic generation. |
+
+**To onboard a new image manually**:
+
+```bash
+# 1. Copy the image
+cp /path/to/your/source/foo.jpg data/images/foo.jpg
+
+# 2. Copy the template and rename
+cp examples/example_scenegraph.full.json data/scenegraphs/foo.jpg.json
+
+# 3. Edit data/scenegraphs/foo.jpg.json:
+#    - set "image_id": "foo.jpg"
+#    - set "primary_subject.gt_bbox": [x1, y1, x2, y2] (your annotation)
+#    - set "primary_subject.img_w" and "img_h" to your image dimensions
+#    - fill in the rest, or leave fields blank and edit in the UI later
+
+# 4. Validate before serving (catches schema mistakes early)
+python examples/validate_scenegraph.py data/scenegraphs/foo.jpg.json
 ```
 
-See `server.py` for the full JSON schema enforced by the server, and the
-`SHORT_KEY_TO_QFOLDER` mapping for the 12 binary subject-level keys the UI
-expects (`blood_pool`, `standing`, `prone_back`, `prone_face`, `side_lying`,
-`sit_supp`, `sit_unsupp`, `tripod_pos`, `amp_leg`, `amp_arm`, `protect_hand`,
-`is_medic`). You can adapt these to your domain by editing the mapping +
-the corresponding HTML constants in `templates/index.html`.
+**To onboard many images programmatically**: generate one
+`data/scenegraphs/<image_id>.json` per image with your VLM pipeline (or any
+script) following the schema. Then validate the whole folder:
+
+```bash
+python examples/validate_scenegraph.py data/scenegraphs/
+```
+
+The validator (`examples/validate_scenegraph.py`) is a 168-line standalone
+script with no dependencies beyond the Python standard library. It reports
+every missing/typed-wrong field per file and exits non-zero if any file
+fails, so it slots into CI cleanly:
+
+```yaml
+- run: python scenegraph-review/examples/validate_scenegraph.py scenegraph-review/data/scenegraphs/
+```
+
+### Required fields summary
+
+| Top-level         | Type                                                                                  |
+|-------------------|---------------------------------------------------------------------------------------|
+| `image_id`        | string (matches the JPG filename)                                                     |
+| `modality`        | `"RGB"` or `"IR"`                                                                     |
+| `scene`           | object (see below)                                                                    |
+| `primary_subject` | object (see below)                                                                    |
+| `secondary_entities` | array of objects (may be empty)                                                    |
+| `relations`       | array of objects (may be empty)                                                       |
+
+| `scene.*`                       | Type                                          |
+|---------------------------------|-----------------------------------------------|
+| `setting`, `lighting`, `terrain` | strings                                      |
+| `hazards`, `medical_devices_visible`, `threats_visible`, `obstacles` | array of strings |
+| `nearby_persons`, `nearby_vehicles` | `{"count": int, "details": str}`          |
+
+| `primary_subject.*`              | Type                                                                |
+|----------------------------------|---------------------------------------------------------------------|
+| `gt_bbox`, `predicted_bbox`      | `[x1, y1, x2, y2]` — four ints, pixel coords                        |
+| `predicted_bbox_confidence`      | `"low"` / `"medium"` / `"high"`                                     |
+| `img_w`, `img_h`                 | int, in pixels                                                      |
+| `posture_prose`, `emt_assessment_prose` | strings                                                      |
+| `ambulatory`                     | `"yes"` / `"no"` / `"unknown"`                                      |
+| 12 short-key verdict objects     | each is `{"verdict": …, "confidence": …, "evidence": …}` (enums below) |
+
+The 12 verdict short-keys (the subject-level binary observations the UI is
+built around): `blood_pool`, `standing`, `prone_back`, `prone_face`,
+`side_lying`, `sit_supp`, `sit_unsupp`, `tripod_pos`, `amp_leg`, `amp_arm`,
+`protect_hand`, `is_medic`. Each verdict is `"yes" | "no" | "unknown"` and
+confidence is `"low" | "medium" | "high"`.
+
+If you need to adapt the 12 keys to a different domain, update both:
+- `SHORT_KEY_TO_QFOLDER` in `server.py` (top of file)
+- `SHORT_KEYS` in `templates/index.html` (near the top of the `<script>` block)
+- `SHORT_KEYS` in `examples/validate_scenegraph.py`
+
+### Bbox conventions
+
+- All bboxes are `[x1, y1, x2, y2]` in **pixel coordinates** of the original
+  image. `x1 < x2`, `y1 < y2`.
+- `gt_bbox` is the *ground-truth* box for the primary subject. The UI draws
+  this in **green solid**.
+- `predicted_bbox` is the model's independent estimate of where the same
+  subject is. The UI draws this in **magenta dashed**, and computes IoU
+  against `gt_bbox`. Show or hide via the toolbar checkbox.
+- If you have only one bbox source, set both to the same value.
+- If you do not have ground truth at all, set `gt_bbox = [0,0,0,0]` (the UI
+  will report IoU = 0 against your predicted box, which is the honest signal).
 
 ---
 
