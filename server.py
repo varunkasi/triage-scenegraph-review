@@ -1,7 +1,6 @@
 """scenegraph-review server for vlm-image-review:5590."""
 from __future__ import annotations
 import argparse
-import io
 import json
 import os
 import secrets
@@ -22,9 +21,8 @@ THUMB_DIR   = DATA_DIR / "thumbs"
 THUMB_DIR.mkdir(exist_ok=True)
 BACKUP_DIR  = DATA_DIR / "backups"
 BACKUP_DIR.mkdir(exist_ok=True)
-STATIC_DIR  = ROOT / "static"
 
-app = Flask(__name__, static_folder=str(STATIC_DIR), static_url_path="/static")
+app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB per request
 TOKENS: set[str] = set()  # in-memory; one process
 
@@ -92,18 +90,6 @@ def api_auth():
 @app.get("/api/list")
 @require_auth
 def api_list():
-    """Returns all 106 image_ids; flag whether each has a scenegraph yet."""
-    sg = set(list_image_ids())
-    return jsonify([
-        {"image_id": f"{stem}.jpg" if not stem.endswith(".jpg") else stem,
-         "has_scenegraph": (stem in sg or f"{stem}".replace(".jpg","") in sg)}
-        for stem in [p.removesuffix(".jpg") for p in [n for n in (Path(p).name for p in [str(p) for p in IMAGES_DIR.glob('*.jpg')])]]
-    ])
-
-
-@app.get("/api/list2")
-@require_auth
-def api_list2():
     """Cleaner list endpoint."""
     sg_stems = set(p.name.removesuffix(".json") for p in SG_DIR.glob("*.jpg.json"))
     items = []

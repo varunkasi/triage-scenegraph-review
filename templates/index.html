@@ -190,7 +190,7 @@ async function login(){
 }
 
 async function init(){
-  const r = await api("/api/list2");
+  const r = await api("/api/list");
   if(!r.ok){ return; }
   images = await r.json();
   renderGallery();
@@ -569,7 +569,7 @@ window.addEventListener("beforeunload", e => {
 });
 
 // Try whoami via list endpoint; if fails go to login
-fetch("/api/list2", {credentials:"same-origin"}).then(r => {
+fetch("/api/list", {credentials:"same-origin"}).then(r => {
   if(r.ok){ hideLogin(); init(); } else { showLogin(); }
 });
 </script>
