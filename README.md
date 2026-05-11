@@ -63,9 +63,12 @@ logs/                      server stdout/stderr (gitignored)
 
 ```bash
 python3 -m venv venv
-venv/bin/pip install flask pillow
+venv/bin/pip install -r requirements.txt
 ACCESS_CODE=sgreview2026 venv/bin/python server.py --port 5590
 ```
+
+`requirements.txt` pins exact versions verified on the live deployment
+(Flask 3.1.3, Pillow 12.2.0, Python 3.12.3).
 
 Deployment unit on the VM:
 
