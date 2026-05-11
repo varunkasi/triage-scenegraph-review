@@ -1,0 +1,5 @@
+# Direct dependencies only — pip-compile resolves transitives + adds hashes.
+# Regenerate requirements.txt after editing this file:
+#   pip-compile --generate-hashes --output-file=requirements.txt requirements.in
+flask==3.1.3
+pillow==12.2.0

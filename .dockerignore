@@ -1,0 +1,13 @@
+venv/
+logs/
+data/
+__pycache__/
+*.pyc
+.DS_Store
+.git
+.gitignore
+.python-version
+Dockerfile
+.dockerignore
+README.md
+requirements.in
