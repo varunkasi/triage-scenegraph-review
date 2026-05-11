@@ -153,6 +153,7 @@ const AMB = ["yes","no","unknown"];
 
 let images = [];     // [{image_id, has_scenegraph}]
 let currentGold = null;   // {short_key: {expert_id: "Yes"|"No"}}
+let features = {expert_gold_enabled: false};   // populated by /api/features at init
 let idx = 0;
 let current = null;  // current scenegraph object
 let dirty = false;
@@ -189,7 +190,35 @@ async function login(){
   hideLogin(); init();
 }
 
+function applyFeatureFlagsToChrome(){
+  // Hide the gold-comparison legend chips when expert gold is disabled.
+  if(!features.expert_gold_enabled){
+    const legend = document.getElementById("legendBar");
+    if(legend){
+      legend.querySelectorAll(".chip").forEach(chip => {
+        const t = chip.textContent || "";
+        if(t.includes("matches expert") || t.includes("differs from expert") ||
+           t.includes("experts disagree") || t.includes("no expert label") ||
+           t.includes("expert pills")){
+          chip.style.display = "none";
+        }
+      });
+      legend.querySelectorAll(".sep").forEach(s => s.style.display = "none");
+    }
+    // Also collapse the 5th column (gold pills) on .verdict grid rows.
+    const css = document.createElement("style");
+    css.textContent = ".verdict { grid-template-columns: 130px 80px 80px 1fr !important; }";
+    document.head.appendChild(css);
+  }
+}
+
 async function init(){
+  // Load feature flags before anything else; controls whether to render gold UI.
+  try {
+    const fr = await api("/api/features");
+    if(fr.ok) features = await fr.json();
+  } catch(e) { /* default: expert_gold_enabled false */ }
+  applyFeatureFlagsToChrome();
   const r = await api("/api/list");
   if(!r.ok){ return; }
   images = await r.json();
@@ -235,10 +264,11 @@ async function select(i){
     $("stMod").textContent = "—"; $("stIou").textContent = "—";
     return;
   }
-  const [r, gr] = await Promise.all([
-    api(`/api/sg/${encodeURIComponent(it.image_id)}`),
-    api(`/api/gold/${encodeURIComponent(it.image_id)}`).catch(() => null),
-  ]);
+  const reqs = [api(`/api/sg/${encodeURIComponent(it.image_id)}`)];
+  if(features.expert_gold_enabled){
+    reqs.push(api(`/api/gold/${encodeURIComponent(it.image_id)}`).catch(() => null));
+  }
+  const [r, gr] = await Promise.all(reqs);
   if(!r.ok){ return; }
   current = await r.json();
   currentGold = (gr && gr.ok) ? await gr.json() : {};
@@ -402,6 +432,9 @@ function verdictRow(name, v){
   conf.addEventListener("change", () => { v.confidence= conf.value; dirtyOn(); });
   ev.addEventListener("input",    () => { v.evidence  = ev.value;  dirtyOn(); });
 
+  if(!features.expert_gold_enabled){
+    return tag("div", {class:"verdict", id:`vrow-${name}`}, [tag("div",{class:"name"},name), sel, conf, ev]);
+  }
   const pills = tag("div", {class:"gold-pills", id:`gp-${name}`});
   const goldEntries = (currentGold && currentGold[name]) ? Object.entries(currentGold[name]) : [];
   buildPillsInto(pills, goldEntries, v.verdict);
@@ -442,6 +475,7 @@ function applyRowTint(row, goldEntries, gemmaVerdict){
 
 function recolorVerdictRow(name){
   if(!current) return;
+  if(!features.expert_gold_enabled) return;
   const v = current.primary_subject[name];
   const goldEntries = (currentGold && currentGold[name]) ? Object.entries(currentGold[name]) : [];
   const pills = document.getElementById(`gp-${name}`);

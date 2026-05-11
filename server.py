@@ -18,16 +18,25 @@ DATA_DIR    = ROOT / "data"
 IMAGES_DIR  = DATA_DIR / "images"
 SG_DIR      = DATA_DIR / "scenegraphs"
 THUMB_DIR   = DATA_DIR / "thumbs"
-THUMB_DIR.mkdir(exist_ok=True)
 BACKUP_DIR  = DATA_DIR / "backups"
-BACKUP_DIR.mkdir(exist_ok=True)
+# Auto-create runtime dirs on a fresh clone (data/ may not yet exist).
+for _d in (DATA_DIR, IMAGES_DIR, SG_DIR, THUMB_DIR, BACKUP_DIR):
+    _d.mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024  # 5 MB per request
 TOKENS: set[str] = set()  # in-memory; one process
 
-# --- Gold labels (expert annotations from the labeling UI on this same VM) ---
-GOLD_BASE = Path("/home/ubuntu/vqa_labeling_Apr2026")
+# --- Optional expert-gold labels integration ---
+#
+# When the environment variable GOLD_LABELS_DIR points to a directory containing
+# per-question subdirectories with gold_labels_expert_*.json files, the UI shows
+# per-verdict comparison pills + row-level color tints. When unset or pointing
+# to a path without that structure, all gold-related UI is hidden and the
+# /api/gold endpoint returns empty objects. This is intentionally OFF by
+# default so the open-source deployment works without any extra config.
+GOLD_LABELS_DIR = os.environ.get("GOLD_LABELS_DIR", "").strip()
+GOLD_BASE = Path(GOLD_LABELS_DIR) if GOLD_LABELS_DIR else None
 SHORT_KEY_TO_QFOLDER = {
     "blood_pool":   "q01_blood_pooling",
     "standing":     "q02_standing_moving",
@@ -44,7 +53,21 @@ SHORT_KEY_TO_QFOLDER = {
 }
 
 
-ACCESS_CODE = os.environ.get("ACCESS_CODE", "sgreview2026")
+def _probe_expert_gold() -> bool:
+    """Returns True iff GOLD_BASE is set AND has at least one q*/gold_labels_expert_*.json file."""
+    if GOLD_BASE is None or not GOLD_BASE.is_dir():
+        return False
+    for qfolder in SHORT_KEY_TO_QFOLDER.values():
+        qdir = GOLD_BASE / qfolder
+        if qdir.is_dir() and any(qdir.glob("gold_labels_expert_*.json")):
+            return True
+    return False
+
+
+EXPERT_GOLD_ENABLED = _probe_expert_gold()
+
+
+ACCESS_CODE = os.environ.get("ACCESS_CODE", "changeMe")
 COOKIE_NAME = "sg_token"
 
 
@@ -173,7 +196,10 @@ def api_gold(image_id):
     """Return per-question gold labels (all experts) for the given image.
 
     Output shape:  {short_key: {expert_id: "Yes"|"No", ...}, ...}
+    Returns all empty per-expert dicts when EXPERT_GOLD_ENABLED is False.
     """
+    if not EXPERT_GOLD_ENABLED:
+        return jsonify({sk: {} for sk in SHORT_KEY_TO_QFOLDER})
     img_key = f"images/{image_id}"
     out = {}
     for sk, qfolder in SHORT_KEY_TO_QFOLDER.items():
@@ -222,12 +248,22 @@ def api_download_all():
     )
 
 
+
+@app.get("/api/features")
+def api_features():
+    """Public feature flags consumed by the frontend at page load."""
+    return jsonify({
+        "expert_gold_enabled": EXPERT_GOLD_ENABLED,
+    })
+
+
 @app.get("/api/health")
 def api_health():
     return jsonify({
         "ok": True,
         "scenegraphs": len(list_image_ids()),
         "images_on_disk": len(all_image_ids_on_disk()),
+        "expert_gold_enabled": EXPERT_GOLD_ENABLED,
     })
 
 
@@ -239,6 +275,7 @@ def main():
     print(f"scenegraph-review serving on {args.host}:{args.port} (access code: {'(env)' if os.environ.get('ACCESS_CODE') else 'sgreview2026'})")
     print(f"  scenegraphs dir: {SG_DIR}  ({len(list_image_ids())} files)")
     print(f"  images dir:      {IMAGES_DIR}  ({len(all_image_ids_on_disk())} files)")
+    print(f"  expert gold:     {'ENABLED (' + str(GOLD_BASE) + ')' if EXPERT_GOLD_ENABLED else 'disabled'}")
     app.run(host=args.host, port=args.port, debug=False)
 
 

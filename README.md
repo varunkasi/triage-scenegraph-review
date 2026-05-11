@@ -1,96 +1,168 @@
 # scenegraph-review
 
-Flask UI for reviewing & editing per-image EMT scenegraphs produced by
-`gemma-4-31b-it` (see `dtc-vlm-server:/external/gemma4-31b-it/scenegraph-pipeline/`).
+A Flask UI for reviewing and editing per-image scenegraphs produced by a VLM
+(vision-language model). Built for triage / casualty-assessment imagery, but
+the schema is generic enough to repurpose.
 
-Deployed live at `http://128.237.74.104:5590` on `vlm-image-review` as
-`scenegraph-review.service` (systemd; access code: `sgreview2026`).
+The UI shows your image with the ground-truth and (optionally) predicted
+bounding box, lets you edit every field in the scenegraph JSON (text fields,
+dropdowns for enumerated values, add/remove rows for entities and relations),
+and saves changes back to disk with automatic timestamped backups.
+
+---
+
+## Quickstart (Docker)
+
+```bash
+git clone <repo-url> scenegraph-review && cd scenegraph-review
+docker build -t scenegraph-review .
+
+# Put your data in place:
+mkdir -p data/{images,scenegraphs,thumbs,backups}
+cp /path/to/your/images/*.jpg     data/images/
+cp /path/to/your/scenegraphs/*.json  data/scenegraphs/
+
+docker run -d --name scenegraph-review \
+    -p 5590:5590 \
+    -e ACCESS_CODE=changeMe \
+    -v $(pwd)/data:/app/data \
+    --restart unless-stopped \
+    scenegraph-review
+```
+
+Open `http://localhost:5590`, enter the access code, and start reviewing.
+
+## Quickstart (bare-metal venv)
+
+```bash
+git clone <repo-url> scenegraph-review && cd scenegraph-review
+python3 -m venv venv
+venv/bin/pip install --require-hashes -r requirements.txt
+
+mkdir -p data/{images,scenegraphs,thumbs,backups}
+cp /path/to/your/images/*.jpg     data/images/
+cp /path/to/your/scenegraphs/*.json  data/scenegraphs/
+
+ACCESS_CODE=changeMe venv/bin/python server.py --port 5590
+```
+
+---
+
+## Data layout
+
+Everything you bring lives in `data/`:
+
+```
+data/
+├── images/        your JPEGs (one per scenegraph; filename = image_id)
+├── scenegraphs/   your scenegraph JSONs, named `<image_id>.json`
+├── thumbs/        regenerated on demand (240×160 cache); leave empty
+└── backups/       per-save snapshots written by the server; leave empty
+```
+
+The server matches each `data/scenegraphs/<name>.jpg.json` to its
+`data/images/<name>.jpg`. If a scenegraph references an image that's not
+on disk, the gallery shows it with a "no SG" badge.
+
+## Scenegraph JSON shape
+
+```json
+{
+  "image_id": "example.jpg",
+  "modality": "RGB",
+  "scene": {
+    "setting": "outdoor wooded area",
+    "lighting": "daylight",
+    "terrain": "dirt with sparse grass",
+    "hazards": ["debris"],
+    "nearby_persons":  {"count": 0, "details": "none visible"},
+    "nearby_vehicles": {"count": 0, "details": "none visible"},
+    "medical_devices_visible": [],
+    "threats_visible": [],
+    "obstacles": []
+  },
+  "primary_subject": {
+    "gt_bbox":        [x1, y1, x2, y2],
+    "predicted_bbox": [x1, y1, x2, y2],
+    "predicted_bbox_confidence": "low|medium|high",
+    "img_w": 1920,
+    "img_h": 1080,
+    "posture_prose": "...",
+    "ambulatory": "yes|no|unknown",
+    "emt_assessment_prose": "...",
+    "<short_key_1>": {"verdict": "yes|no|unknown", "confidence": "low|medium|high", "evidence": "..."},
+    "<short_key_2>": { ... },
+    ...
+  },
+  "secondary_entities": [
+    {"id": "e1", "type": "person|vehicle|object|threat|structure|animal",
+     "count": 1, "relation": "...", "attrs": {...}}
+  ],
+  "relations": [
+    {"from": "primary", "rel": "...", "to": "e1"}
+  ]
+}
+```
+
+See `server.py` for the full JSON schema enforced by the server, and the
+`SHORT_KEY_TO_QFOLDER` mapping for the 12 binary subject-level keys the UI
+expects (`blood_pool`, `standing`, `prone_back`, `prone_face`, `side_lying`,
+`sit_supp`, `sit_unsupp`, `tripod_pos`, `amp_leg`, `amp_arm`, `protect_hand`,
+`is_medic`). You can adapt these to your domain by editing the mapping +
+the corresponding HTML constants in `templates/index.html`.
 
 ---
 
 ## Features
 
-- Access-code-gated login (`ACCESS_CODE` env var, default `sgreview2026`).
-- 106-image gallery with thumbnails. Selected thumb gets a gold border.
+- Access-code-gated login (`ACCESS_CODE` env var; default `changeMe`).
+- Thumbnail gallery; selected thumb has gold border.
 - Left/right arrow keys navigate prev/next. Click any thumb to jump.
 - Toggleable predicted-bbox overlay:
-  - **Green solid** box = GT (always burned into the JPG by the labeling pipeline).
-  - **Magenta dashed** box = gemma predicted bbox (toggled on/off via toolbar checkbox).
+  - **Green solid** box = GT (typically already burned into the JPG by your data pipeline).
+  - **Magenta dashed** box = model-predicted bbox (toggled via toolbar checkbox).
 - Editable form for every scenegraph field:
-  - Text inputs / textareas for free-text.
-  - Dropdowns for enumerated fields (modality, ambulatory, verdict, confidence,
-    entity type).
-  - Number inputs for bbox + counts.
+  - Text inputs / textareas for free-text fields.
+  - Dropdowns for enumerated fields (modality, ambulatory, verdict, confidence, entity type).
+  - Number inputs for bbox coordinates and counts.
   - Add/remove rows for `secondary_entities` and `relations`.
-- Per-question expert-gold comparison pills (e.g. `E1:Y✓`, `E3:N✗`) +
-  row-level color tint:
-  - Green = all experts agree with gemma.
-  - Red = all experts differ.
-  - Orange = mixed / gemma=unknown.
-  - None = no expert label for that question on this image.
-  Pulled live from `~/vqa_labeling_Apr2026/q*/gold_labels_expert_*.json` on the
-  same VM.
-- **Save** (`PUT /api/sg/<image_id>`) writes the in-memory JSON to disk with a
-  timestamped backup in `data/backups/`.
-- **Download current** — single JSON for the visible image, includes unsaved
-  edits.
-- **Download all (NDJSON)** — server reads all 106 from disk, streams a single
-  newline-delimited bundle. Reflects on-disk saved state only.
-- Bottom status bar: filename, modality, gt-vs-predicted IoU, index.
+- **Save** writes the in-memory JSON to disk with a timestamped backup in
+  `data/backups/`. Backups are kept forever — clean them up yourself if disk
+  is tight.
+- **Download current** — single JSON for the visible image, includes any
+  unsaved edits.
+- **Download all (NDJSON)** — server reads all on-disk scenegraphs and
+  streams a single newline-delimited bundle. Excludes unsaved edits.
+- Bottom status bar: filename, modality, gt-vs-predicted IoU, image index.
+- Ctrl/Cmd-S as keyboard shortcut for Save. Unsaved-edits warning before
+  navigating away.
 
 ---
 
-## Reproducibility
+## API endpoints
 
-Three artifacts make the environment recreatable bit-identically:
+All require an auth cookie except `/api/auth`, `/api/health`, and `/api/features`.
 
-| File | Purpose |
-|---|---|
-| `.python-version` | Pins Python `3.12.3` — pyenv / asdf / uv / mise auto-pick. |
-| `requirements.txt` | Hash-pinned (`--require-hashes`). Every wheel/sdist locked to a sha256. Generated by `pip-compile --generate-hashes` from `requirements.in`. |
-| `Dockerfile` | Pins the base image by sha256 digest (`python:3.12.3-slim-bookworm@sha256:afc139…`). Multi-arch (linux/amd64 + linux/arm64). Runs as non-root user `app`. |
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/auth` | exchange access code for session cookie (24 h) |
+| GET | `/api/features` | feature flags consumed by the frontend at page load |
+| GET | `/api/list` | list image_ids + `has_scenegraph` flag |
+| GET | `/api/sg/<image_id>` | fetch a scenegraph JSON |
+| PUT | `/api/sg/<image_id>` | save a scenegraph JSON (creates timestamped backup) |
+| GET | `/api/sg/<image_id>/download` | download a single scenegraph as JSON |
+| GET | `/api/download_all` | stream all on-disk scenegraphs as NDJSON |
+| GET | `/api/image/<image_id>` | serve the full-size image |
+| GET | `/api/thumb/<image_id>` | serve 240×160 thumbnail (cached) |
+| GET | `/api/health` | counts + flag visibility (no auth) |
 
 ---
 
-## Deployment
-
-### Option A — Container (recommended for new deployments)
+## Production deployment (systemd)
 
 ```bash
-docker build -t scenegraph-review:1.0 .
-docker run -d --name scenegraph-review \
-    -p 5590:5590 \
-    -e ACCESS_CODE=mySecretCode \
-    -v $(pwd)/data:/app/data \
-    --restart unless-stopped \
-    scenegraph-review:1.0
-```
+# After cloning + setting up venv + populating data/:
 
-The bind-mounted `data/` directory holds scenegraph JSONs, the images symlink
-farm, thumbnails, and backups. It persists across container restarts.
-
-### Option B — Bare-metal venv (matches the live `vlm-image-review` deployment)
-
-```bash
-# 1. Clone or rsync this folder onto the target VM, then:
-cd ~/scenegraph-review
-python3 -m venv venv
-venv/bin/pip install --require-hashes -r requirements.txt
-
-# 2. Provision data/:
-mkdir -p data/{scenegraphs,images,thumbs,backups}
-# Either symlink images from an existing pool, or rsync them:
-ln -s ~/vqa_labeling_Apr2026/q01_blood_pooling/images data/images-source
-# (the code reads from data/images/ — populate with the 106 unique JPGs)
-
-# 3. Pull scenegraphs from the inference host (dtc-vlm-server):
-rsync -a dtc-vlm-server:/external/gemma4-31b-it/data/gold-eval/scenegraphs/ \
-        data/scenegraphs/
-
-# 4. Run for testing:
-ACCESS_CODE=sgreview2026 venv/bin/python server.py --port 5590
-
-# 5. Install systemd unit for production (requires sudo):
 sudo tee /etc/systemd/system/scenegraph-review.service > /dev/null <<EOF
 [Unit]
 Description=Scenegraph Review UI Server
@@ -100,7 +172,7 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=/home/ubuntu/scenegraph-review
-Environment="ACCESS_CODE=sgreview2026"
+Environment="ACCESS_CODE=changeMe"
 ExecStart=/home/ubuntu/scenegraph-review/venv/bin/python server.py --port 5590
 Restart=on-failure
 RestartSec=5
@@ -111,74 +183,30 @@ SyslogIdentifier=scenegraph-review
 [Install]
 WantedBy=multi-user.target
 EOF
+
 sudo systemctl daemon-reload
 sudo systemctl enable --now scenegraph-review.service
-
-# 6. (Cloud only) Open the port in the security group, e.g. on OpenStack:
-#    openstack security group rule create default --protocol tcp --dst-port 5590 --ingress
+sudo systemctl status scenegraph-review.service
 ```
 
-### Verifying a deployment
-
-```bash
-curl -s http://127.0.0.1:5590/api/health
-# {"images_on_disk": 106, "ok": true, "scenegraphs": 106}
-
-# auth + list
-curl -s -X POST http://127.0.0.1:5590/api/auth \
-     -H "Content-Type: application/json" \
-     -d '{"access_code":"sgreview2026"}' -c /tmp/jar.txt -o /dev/null
-curl -s -b /tmp/jar.txt http://127.0.0.1:5590/api/list | head -c 200
-```
+If your host is behind a cloud security group (AWS / GCP / OpenStack / etc.),
+remember to open inbound TCP on the port you picked.
 
 ---
 
-## API endpoints
+## Reproducibility
 
-All require an auth cookie except `/api/auth` and `/api/health`.
+Three artifacts make the environment recreatable bit-identically:
 
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/auth` | exchange access code for session cookie (24 h) |
-| GET | `/api/list` | list 106 image_ids + `has_scenegraph` flag |
-| GET | `/api/sg/<image_id>` | fetch a scenegraph JSON |
-| PUT | `/api/sg/<image_id>` | save a scenegraph JSON (creates timestamped backup) |
-| GET | `/api/sg/<image_id>/download` | download a single scenegraph as JSON |
-| GET | `/api/download_all` | stream all on-disk scenegraphs as NDJSON |
-| GET | `/api/gold/<image_id>` | per-question expert gold verdicts for this image |
-| GET | `/api/image/<image_id>` | serve full-size image |
-| GET | `/api/thumb/<image_id>` | serve 240×160 thumbnail (cached in `data/thumbs/`) |
-| GET | `/api/health` | counts of scenegraphs and images on disk |
+| File | Purpose |
+|---|---|
+| `.python-version` | Pins Python `3.12.3` — pyenv / asdf / uv / mise auto-pick. |
+| `requirements.txt` | Hash-pinned (`--require-hashes`). Generated from `requirements.in` via `pip-compile --generate-hashes`. |
+| `Dockerfile` | Pins the base image by sha256 digest. Multi-arch (linux/amd64 + linux/arm64). Runs as non-root user. |
 
----
+### Regenerating hash-pinned requirements
 
-## Layout
-
-```
-server.py                  Flask API (~190 lines, single file)
-templates/index.html       single-page UI (vanilla JS + inline CSS, ~580 lines)
-requirements.in            direct deps only (Flask, Pillow)
-requirements.txt           hash-pinned, all transitives (generated)
-.python-version            3.12.3
-Dockerfile                 prod container
-.dockerignore              excludes runtime state + tooling from image
-.gitignore                 excludes runtime state + venv from repo
-data/                      runtime state (gitignored, dockerignored)
-  ├── images/              the 106 JPGs (or a symlink farm to them)
-  ├── scenegraphs/         the 106 JSONs being edited
-  ├── thumbs/              regenerated 240×160 JPEGs
-  └── backups/             per-save snapshots, named <image_id>.<YYYYMMDD_HHMMSS>.json
-```
-
-`data/` is intentionally treated as runtime state — not source. Code goes in
-git; edited data lives on disk; canonical inference outputs live on
-`dtc-vlm-server:/external/gemma4-31b-it/data/gold-eval/scenegraphs/`.
-
----
-
-## Regenerating the hash-pinned requirements
-
-After editing `requirements.in` (to add or bump a direct dep):
+After editing `requirements.in`:
 
 ```bash
 python3 -m venv ~/VENVs/sg-piptools
@@ -187,4 +215,28 @@ python3 -m venv ~/VENVs/sg-piptools
     --output-file=requirements.txt requirements.in
 ```
 
-Then `git commit` the regenerated `requirements.txt`.
+---
+
+## Layout
+
+```
+server.py                  Flask API (~250 lines)
+templates/index.html       single-page UI (vanilla JS + inline CSS, ~600 lines)
+requirements.in            direct deps only
+requirements.txt           hash-pinned, all transitives (generated)
+.python-version            3.12.3
+Dockerfile                 prod container
+.env.example               sample environment configuration
+.dockerignore              excludes runtime state + tooling from image
+.gitignore                 excludes runtime state + venv from repo
+data/                      runtime state (gitignored)
+```
+
+`data/` is intentionally treated as runtime state, not source. Code goes in
+git; edited data lives on disk.
+
+---
+
+## License
+
+MIT — see `LICENSE`.
