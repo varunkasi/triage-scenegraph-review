@@ -4,47 +4,79 @@ A Flask UI for reviewing and editing per-image scenegraphs produced by a VLM
 (vision-language model). Built for triage / casualty-assessment imagery, but
 the schema is generic enough to repurpose.
 
-The UI shows your image with the ground-truth and (optionally) predicted
-bounding box, lets you edit every field in the scenegraph JSON (text fields,
-dropdowns for enumerated values, add/remove rows for entities and relations),
-and saves changes back to disk with automatic timestamped backups.
+Each image is paired with a JSON scenegraph describing the scene, the primary
+subject (highlighted by a bounding box), 12 binary observation verdicts, and
+optional secondary entities + relations. The UI loads pairs side-by-side,
+lets you edit every field, and saves changes back to disk with automatic
+timestamped backups.
 
 ---
 
-## Quickstart (Docker)
+## Contents
+
+1. [What you get](#what-you-get)
+2. [First 5 minutes (no data needed)](#first-5-minutes-no-data-needed)
+3. [Bringing your own data](#bringing-your-own-data)
+4. [Using the UI](#using-the-ui)
+5. [Production deployment](#production-deployment)
+6. [Updating after first deploy](#updating-after-first-deploy)
+7. [Security](#security)
+8. [Troubleshooting / FAQ](#troubleshooting--faq)
+9. [Reproducibility](#reproducibility)
+10. [API reference](#api-reference)
+11. [Repository layout](#repository-layout)
+12. [License](#license)
+
+---
+
+## What you get
+
+| Component                | Purpose                                                      |
+|--------------------------|--------------------------------------------------------------|
+| Browser UI on `:5590`    | Gallery, image viewer, editable form, save/download         |
+| Single-file Flask server | Reads/writes JSONs on disk, serves images, auth cookie       |
+| 12-key verdict schema    | Pre-wired for triage but adaptable (see [Adapting to a different domain](#adapting-to-a-different-domain)) |
+| Example templates + validator | `examples/` — copy these, validate before serving      |
+
+Tested on Python 3.12.3 and on any Docker host (multi-arch image: linux/amd64
++ linux/arm64).
+
+---
+
+## First 5 minutes (no data needed)
+
+You can prove the install works end-to-end with the bundled minimal
+template — no images, no scenegraph generation pipeline required:
 
 ```bash
 git clone <repo-url> scenegraph-review && cd scenegraph-review
+
+# Build the container
 docker build -t scenegraph-review .
 
-# Put your data in place:
-mkdir -p data/{images,scenegraphs,thumbs,backups}
-cp /path/to/your/images/*.jpg     data/images/
-cp /path/to/your/scenegraphs/*.json  data/scenegraphs/
+# Use the bundled minimal template as a single fake scenegraph
+mkdir -p data/scenegraphs
+cp examples/example_scenegraph.minimal.json data/scenegraphs/example_002.jpg.json
 
-docker run -d --name scenegraph-review \
-    -p 5590:5590 \
-    -e ACCESS_CODE=changeMe \
+# Run
+docker run -d --name sgreview -p 5590:5590 \
+    -e ACCESS_CODE=demo123 \
     -v $(pwd)/data:/app/data \
-    --restart unless-stopped \
     scenegraph-review
+
+# Verify
+curl -s http://localhost:5590/api/health
+# → {"expert_gold_enabled":false,"images_on_disk":0,"ok":true,"scenegraphs":1}
 ```
 
-Open `http://localhost:5590`, enter the access code, and start reviewing.
+Open `http://localhost:5590`, enter `demo123`, and you should see:
+- A single thumbnail in the gallery, flagged **no SG** (no matching image
+  on disk yet — that's the next step).
+- The form panel populated from the minimal template.
+- The status bar showing `idx: 1 / 1` and the filename.
 
-## Quickstart (bare-metal venv)
-
-```bash
-git clone <repo-url> scenegraph-review && cd scenegraph-review
-python3 -m venv venv
-venv/bin/pip install --require-hashes -r requirements.txt
-
-mkdir -p data/{images,scenegraphs,thumbs,backups}
-cp /path/to/your/images/*.jpg     data/images/
-cp /path/to/your/scenegraphs/*.json  data/scenegraphs/
-
-ACCESS_CODE=changeMe venv/bin/python server.py --port 5590
-```
+If you see all of that, the install is working. Stop the container with
+`docker rm -f sgreview` and proceed to onboard real data.
 
 ---
 
@@ -73,20 +105,21 @@ data/
 ignored by the gallery. Convert with `ffmpeg -i input.png output.jpg` or
 similar if needed.
 
-If a `.jpg` exists without a matching `.jpg.json`, it shows in the gallery
-with a red **no SG** badge — useful for tracking which images still need a
-scenegraph from your generation pipeline.
+If a `.jpg` exists without a matching `.jpg.json`, the gallery thumbnail
+shows a red **no SG** badge — useful for tracking which images still need a
+scenegraph from your generation pipeline. The reverse (a `.jpg.json` with no
+matching `.jpg`) shows in the gallery but the image panel renders empty.
 
 ### Scenegraph JSON: use the templates
 
-Two working examples ship with this repo in `examples/`:
+Two working examples ship in `examples/`:
 
 | File                                       | What it is                                                      |
 |--------------------------------------------|-----------------------------------------------------------------|
 | `examples/example_scenegraph.full.json`    | Fully filled-out realistic example. Copy and modify per image.  |
 | `examples/example_scenegraph.minimal.json` | Bare-minimum valid scenegraph — every required field present with safe defaults (`"unknown"`, empty strings/arrays). Useful as a starting skeleton or for programmatic generation. |
 
-**To onboard a new image manually**:
+### Onboard one image manually
 
 ```bash
 # 1. Copy the image
@@ -105,18 +138,20 @@ cp examples/example_scenegraph.full.json data/scenegraphs/foo.jpg.json
 python examples/validate_scenegraph.py data/scenegraphs/foo.jpg.json
 ```
 
-**To onboard many images programmatically**: generate one
-`data/scenegraphs/<image_id>.json` per image with your VLM pipeline (or any
-script) following the schema. Then validate the whole folder:
+### Onboard many images programmatically
+
+Generate one `data/scenegraphs/<image_id>.json` per image with your VLM
+pipeline (or any script) following the schema. Then validate the whole
+folder before serving:
 
 ```bash
 python examples/validate_scenegraph.py data/scenegraphs/
 ```
 
-The validator (`examples/validate_scenegraph.py`) is a 168-line standalone
-script with no dependencies beyond the Python standard library. It reports
-every missing/typed-wrong field per file and exits non-zero if any file
-fails, so it slots into CI cleanly:
+The validator (`examples/validate_scenegraph.py`) is a standalone script
+with no dependencies beyond the Python standard library. It reports every
+missing or type-wrong field per file and exits non-zero if any file fails,
+so it slots into CI directly:
 
 ```yaml
 - run: python scenegraph-review/examples/validate_scenegraph.py scenegraph-review/data/scenegraphs/
@@ -146,18 +181,13 @@ fails, so it slots into CI cleanly:
 | `img_w`, `img_h`                 | int, in pixels                                                      |
 | `posture_prose`, `emt_assessment_prose` | strings                                                      |
 | `ambulatory`                     | `"yes"` / `"no"` / `"unknown"`                                      |
-| 12 short-key verdict objects     | each is `{"verdict": …, "confidence": …, "evidence": …}` (enums below) |
+| 12 short-key verdict objects     | each `{"verdict": …, "confidence": …, "evidence": …}` (enums below) |
 
 The 12 verdict short-keys (the subject-level binary observations the UI is
 built around): `blood_pool`, `standing`, `prone_back`, `prone_face`,
 `side_lying`, `sit_supp`, `sit_unsupp`, `tripod_pos`, `amp_leg`, `amp_arm`,
-`protect_hand`, `is_medic`. Each verdict is `"yes" | "no" | "unknown"` and
+`protect_hand`, `is_medic`. Each verdict is `"yes" | "no" | "unknown"`,
 confidence is `"low" | "medium" | "high"`.
-
-If you need to adapt the 12 keys to a different domain, update both:
-- `SHORT_KEY_TO_QFOLDER` in `server.py` (top of file)
-- `SHORT_KEYS` in `templates/index.html` (near the top of the `<script>` block)
-- `SHORT_KEYS` in `examples/validate_scenegraph.py`
 
 ### Bbox conventions
 
@@ -169,61 +199,72 @@ If you need to adapt the 12 keys to a different domain, update both:
   subject is. The UI draws this in **magenta dashed**, and computes IoU
   against `gt_bbox`. Show or hide via the toolbar checkbox.
 - If you have only one bbox source, set both to the same value.
-- If you do not have ground truth at all, set `gt_bbox = [0,0,0,0]` (the UI
-  will report IoU = 0 against your predicted box, which is the honest signal).
+- If you do not have ground truth at all, set `gt_bbox = [0, 0, 0, 0]` (the
+  UI will report IoU = 0 against your predicted box — that is the honest
+  signal).
+
+### Adapting to a different domain
+
+The 12 verdict short-keys are domain-specific (triage). To adapt to a
+different domain, update the same list in three places:
+
+- `SHORT_KEY_TO_QFOLDER` in `server.py` (top of file)
+- `SHORT_KEYS` in `templates/index.html` (near the top of the `<script>` block)
+- `SHORT_KEYS` in `examples/validate_scenegraph.py`
+
+Each place is a short list literal; keep them in sync.
 
 ---
 
-## Features
+## Using the UI
 
-- Access-code-gated login (`ACCESS_CODE` env var; default `changeMe`).
-- Thumbnail gallery; selected thumb has gold border.
-- Left/right arrow keys navigate prev/next. Click any thumb to jump.
-- Toggleable predicted-bbox overlay:
-  - **Green solid** box = GT (typically already burned into the JPG by your data pipeline).
-  - **Magenta dashed** box = model-predicted bbox (toggled via toolbar checkbox).
-- Editable form for every scenegraph field:
-  - Text inputs / textareas for free-text fields.
-  - Dropdowns for enumerated fields (modality, ambulatory, verdict, confidence, entity type).
-  - Number inputs for bbox coordinates and counts.
-  - Add/remove rows for `secondary_entities` and `relations`.
-- **Save** writes the in-memory JSON to disk with a timestamped backup in
-  `data/backups/`. Backups are kept forever — clean them up yourself if disk
-  is tight.
-- **Download current** — single JSON for the visible image, includes any
-  unsaved edits.
-- **Download all (NDJSON)** — server reads all on-disk scenegraphs and
-  streams a single newline-delimited bundle. Excludes unsaved edits.
-- Bottom status bar: filename, modality, gt-vs-predicted IoU, image index.
-- Ctrl/Cmd-S as keyboard shortcut for Save. Unsaved-edits warning before
-  navigating away.
+What a typical session looks like:
 
----
+1. **Open** `http://<host>:5590`. Enter the access code. Cookie lasts 24 h.
+2. **Gallery**: scrollable strip at the top. Each thumbnail has a number
+   (its 1-based index). The currently selected thumbnail has a **gold
+   border**. The first image with a scenegraph is selected on load.
+3. **Navigate**: click any thumbnail, or use ← / → arrow keys. The gallery
+   auto-scrolls the selected thumb into view.
+4. **Edit**: form panel on the right is the full scenegraph rendered as
+   editable controls.
+   - Free-text → text inputs / textareas
+   - Enumerated → dropdowns (modality, ambulatory, verdict, confidence, entity type)
+   - Numeric → number inputs (bbox coords, counts)
+   - `secondary_entities` and `relations` arrays → use **+ Add** / **× remove**
+     buttons to manage rows
+5. **Save**: click **Save** (or Ctrl-S / Cmd-S). A timestamped backup of the
+   previous version is written to `data/backups/`. A "saved ✓" indicator
+   flashes for 1.5 s in the toolbar. The browser warns before navigating
+   away with unsaved edits.
+6. **Image overlay**: the **show predicted bbox** checkbox in the toolbar
+   toggles the magenta-dashed predicted bbox on top of the image. The
+   solid-green ground-truth box is always burned into the JPG (your data
+   pipeline draws it; the UI does not redraw it).
+7. **Download current**: dumps the visible scenegraph as a single `.json`
+   to your browser's Downloads folder. Includes any unsaved edits.
+8. **Download all (NDJSON)**: server reads every `data/scenegraphs/*.json`
+   from disk and streams a newline-delimited bundle. Reflects on-disk saved
+   state only — unsaved edits in your current session are **not** included.
+9. **Status bar** (bottom): filename, modality, gt-vs-predicted IoU, and
+   1-based image index out of total.
 
-## API endpoints
+### Keyboard shortcuts
 
-All require an auth cookie except `/api/auth`, `/api/health`, and `/api/features`.
-
-| Method | Path | Purpose |
-|---|---|---|
-| POST | `/api/auth` | exchange access code for session cookie (24 h) |
-| GET | `/api/features` | feature flags consumed by the frontend at page load |
-| GET | `/api/list` | list image_ids + `has_scenegraph` flag |
-| GET | `/api/sg/<image_id>` | fetch a scenegraph JSON |
-| PUT | `/api/sg/<image_id>` | save a scenegraph JSON (creates timestamped backup) |
-| GET | `/api/sg/<image_id>/download` | download a single scenegraph as JSON |
-| GET | `/api/download_all` | stream all on-disk scenegraphs as NDJSON |
-| GET | `/api/image/<image_id>` | serve the full-size image |
-| GET | `/api/thumb/<image_id>` | serve 240×160 thumbnail (cached) |
-| GET | `/api/health` | counts + flag visibility (no auth) |
+| Key       | Action                          |
+|-----------|---------------------------------|
+| ←         | Previous image                  |
+| →         | Next image                      |
+| Ctrl/Cmd-S | Save                           |
 
 ---
 
-## Production deployment (systemd)
+## Production deployment
+
+### systemd (bare-metal venv)
 
 ```bash
 # After cloning + setting up venv + populating data/:
-
 sudo tee /etc/systemd/system/scenegraph-review.service > /dev/null <<EOF
 [Unit]
 Description=Scenegraph Review UI Server
@@ -248,10 +289,137 @@ EOF
 sudo systemctl daemon-reload
 sudo systemctl enable --now scenegraph-review.service
 sudo systemctl status scenegraph-review.service
+journalctl -u scenegraph-review -f       # follow logs
 ```
 
-If your host is behind a cloud security group (AWS / GCP / OpenStack / etc.),
-remember to open inbound TCP on the port you picked.
+### Docker with restart policy
+
+```bash
+docker run -d --name scenegraph-review \
+    -p 5590:5590 \
+    -e ACCESS_CODE=changeMe \
+    -v $(pwd)/data:/app/data \
+    --restart unless-stopped \
+    scenegraph-review:latest
+```
+
+### Cloud firewall
+
+If your host is behind a cloud security group (AWS / GCP / Azure / OpenStack
+/ etc.), remember to open **inbound TCP on the port you picked** (default
+`5590`). The application binds to `0.0.0.0` and the container exposes
+`5590`; both are useless until the cloud firewall lets the traffic through.
+
+---
+
+## Updating after first deploy
+
+### Docker
+
+```bash
+cd scenegraph-review
+git pull
+docker build -t scenegraph-review .
+docker rm -f scenegraph-review                # stops old container
+docker run -d --name scenegraph-review \
+    -p 5590:5590 \
+    -e ACCESS_CODE=changeMe \
+    -v $(pwd)/data:/app/data \
+    --restart unless-stopped \
+    scenegraph-review
+```
+
+The `-v $(pwd)/data:/app/data` mount means scenegraphs and backups survive
+the container rebuild.
+
+### systemd venv
+
+```bash
+cd ~/scenegraph-review
+git pull
+venv/bin/pip install --require-hashes -r requirements.txt   # only if deps changed
+sudo systemctl restart scenegraph-review.service
+sudo systemctl status scenegraph-review.service
+```
+
+`data/` is outside the venv and outside the git tree (gitignored), so it's
+untouched by either step.
+
+---
+
+## Security
+
+The access code is a **soft gate**, not real authentication:
+
+- It's a single shared secret, stored unhashed in the systemd unit file or
+  the `-e` flag. Anyone with shell access on the host can read it.
+- It's transmitted over HTTP, not HTTPS, unless you put a reverse proxy in
+  front.
+- Session cookies are valid for 24 h with no revocation mechanism.
+
+**Do not expose this directly to the public internet** as-is. For
+anything sensitive:
+
+- Put it behind a reverse proxy (nginx, Caddy, Traefik) that terminates
+  TLS and adds real authentication (OAuth / SSO / mTLS).
+- Restrict access at the network layer (cloud security group, VPN, WireGuard).
+- Treat the access code as "keeps casual visitors out of an internal tool,"
+  not "protects against a determined attacker."
+
+The data on disk (`data/scenegraphs/`, `data/backups/`) is plain JSON. If
+your scenegraphs contain sensitive information, secure the host filesystem
+accordingly.
+
+---
+
+## Troubleshooting / FAQ
+
+**Gallery is empty.**
+- Run `curl -s http://localhost:5590/api/health` and look at `images_on_disk`
+  and `scenegraphs`. If both are 0, you have no data in `data/images/` and
+  `data/scenegraphs/`. If only `images_on_disk` is 0 but you copied JPGs
+  in, check the extension is lowercase `.jpg`.
+
+**I see thumbnails but they all say "no SG".**
+- Each `foo.jpg` needs a matching `foo.jpg.json` in `data/scenegraphs/`.
+  Note the JSON keeps the `.jpg` suffix in its name.
+
+**Image shows but the form panel is blank.**
+- The scenegraph JSON is missing or malformed. Run
+  `python examples/validate_scenegraph.py data/scenegraphs/<that_id>.jpg.json`
+  for the specific file.
+
+**HTTP 401 immediately after login.**
+- The access code you typed doesn't match the `ACCESS_CODE` env var on
+  the server. Default is `changeMe`. Restart the container or service after
+  changing the env var.
+
+**Port 5590 already in use.**
+- Pick another port: pass `--port 5591` to `server.py`, or
+  `-p 5591:5590` to `docker run` (host-side 5591, container-side stays 5590).
+
+**Container starts but I can't reach it from another machine.**
+- Three things to check: (a) `docker run -p HOST_PORT:5590` actually mapped
+  the port (`docker port scenegraph-review`); (b) host firewall lets the
+  port through; (c) if cloud-hosted, the cloud security group allows
+  inbound TCP on that port.
+
+**I edited a JSON in the UI, clicked Save, but my changes "disappeared"
+when I reload.**
+- Most likely you reloaded in a different image's view. Each scenegraph
+  is per-image. Use ← / → to revisit the same image and confirm.
+- Otherwise, check `data/backups/` — every save writes a timestamped
+  backup. Your changes are recoverable.
+
+**Save is failing silently.**
+- Open browser devtools → Network tab → click Save. The `PUT
+  /api/sg/<id>` request shows the server's response. Common: the
+  scenegraph JSON has additional/wrong keys the JS is choking on; the
+  server logs an error in `journalctl -u scenegraph-review -n 50`.
+
+**How do I adapt the 12 verdict keys to my own domain?**
+- See [Adapting to a different domain](#adapting-to-a-different-domain) —
+  it's three short list literals in three files.
 
 ---
 
@@ -278,23 +446,46 @@ python3 -m venv ~/VENVs/sg-piptools
 
 ---
 
-## Layout
+## API reference
+
+All require an auth cookie except `/api/auth`, `/api/health`, and `/api/features`.
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/auth` | exchange access code for session cookie (24 h) |
+| GET | `/api/features` | feature flags consumed by the frontend at page load |
+| GET | `/api/list` | list image_ids + `has_scenegraph` flag |
+| GET | `/api/sg/<image_id>` | fetch a scenegraph JSON |
+| PUT | `/api/sg/<image_id>` | save a scenegraph JSON (creates timestamped backup) |
+| GET | `/api/sg/<image_id>/download` | download a single scenegraph as JSON |
+| GET | `/api/download_all` | stream all on-disk scenegraphs as NDJSON |
+| GET | `/api/image/<image_id>` | serve the full-size image |
+| GET | `/api/thumb/<image_id>` | serve 240×160 thumbnail (cached) |
+| GET | `/api/health` | counts + flag visibility (no auth) |
+
+---
+
+## Repository layout
 
 ```
-server.py                  Flask API (~250 lines)
+server.py                  Flask API (~250 lines, one file)
 templates/index.html       single-page UI (vanilla JS + inline CSS, ~600 lines)
-requirements.in            direct deps only
+examples/
+  example_scenegraph.full.json     realistic full example (copy and modify per image)
+  example_scenegraph.minimal.json  bare-minimum valid skeleton
+  validate_scenegraph.py           stdlib-only validator script
+requirements.in            direct deps only (Flask, Pillow)
 requirements.txt           hash-pinned, all transitives (generated)
 .python-version            3.12.3
 Dockerfile                 prod container
 .env.example               sample environment configuration
 .dockerignore              excludes runtime state + tooling from image
 .gitignore                 excludes runtime state + venv from repo
-data/                      runtime state (gitignored)
+data/                      runtime state (gitignored, dockerignored)
 ```
 
-`data/` is intentionally treated as runtime state, not source. Code goes in
-git; edited data lives on disk.
+`data/` is intentionally runtime state, not source. Code goes in git; edited
+data lives on disk.
 
 ---
 
