@@ -148,6 +148,16 @@ folder before serving:
 python examples/validate_scenegraph.py data/scenegraphs/
 ```
 
+A regression smoke test for the running server lives at
+`examples/smoke_test.sh` — it exercises every API endpoint (health, auth,
+list, sg fetch/PUT roundtrip, gold, image+thumb Cache-Control, download,
+NDJSON bundle, auth rejection) and exits non-zero on the first failure:
+
+```bash
+bash examples/smoke_test.sh http://localhost:5590
+ACCESS_CODE=mySecret bash examples/smoke_test.sh http://prod-host:5590
+```
+
 The validator (`examples/validate_scenegraph.py`) is a standalone script
 with no dependencies beyond the Python standard library. It reports every
 missing or type-wrong field per file and exits non-zero if any file fails,
