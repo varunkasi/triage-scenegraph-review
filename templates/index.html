@@ -52,7 +52,9 @@ textarea{width:100%;min-height:48px;resize:vertical;font-family:inherit}
 .row .lbl{color:#94a3b8;padding-top:5px;font-size:12px}
 .row input, .row select, .row textarea{width:100%}
 .bbox-row input{width:60px;display:inline-block;margin-right:4px}
-.verdict{display:grid;grid-template-columns:130px 80px 80px 1fr;gap:6px;margin:3px 0;align-items:start}
+.verdict{display:grid;grid-template-columns:130px 80px 80px 1fr 130px;gap:6px;margin:3px 0;align-items:start}
+body.no-gold .verdict{grid-template-columns:130px 80px 80px 1fr}
+body.no-gold .gold-only{display:none}
 .verdict .name{color:#fde68a;padding-top:5px;font-size:12px;font-weight:500}
 .verdict textarea{min-height:36px}
 .array-row{border:1px solid #1e293b;border-radius:4px;padding:8px;margin:6px 0;background:#0c1424;position:relative}
@@ -75,7 +77,6 @@ textarea{width:100%;min-height:48px;resize:vertical;font-family:inherit}
 .legend-bar .chip.muted{background:#1e293b;color:#64748b;border-color:#334155}
 .legend-bar .sep{color:#475569}
 .legend-bar code{background:#0b1220;padding:0 4px;border-radius:3px;color:#cbd5e1;font-size:11px}
-.verdict{grid-template-columns:130px 80px 80px 1fr 130px}
 .verdict.row-ok{background:#064e3b1f}
 .verdict.row-bad{background:#7f1d1d1f}
 .verdict.row-mix{background:#78350f1f}
@@ -116,12 +117,12 @@ textarea{width:100%;min-height:48px;resize:vertical;font-family:inherit}
     <span class="chip box-gt">■ GT bbox (green, burned into image)</span>
     <span class="chip box-pr">▤ predicted bbox (magenta dashed, toggle above)</span>
     <span class="sep">•</span>
-    <span class="chip ok">verdict matches expert(s)</span>
-    <span class="chip bad">verdict differs from expert(s)</span>
-    <span class="chip mix">experts disagree / gemma=unknown</span>
-    <span class="chip muted">no expert label</span>
-    <span class="sep">•</span>
-    <span class="chip">expert pills: <code>E1:Y✓</code> = expert_01 said Yes (matches gemma), <code>E1:Y✗</code> = differs</span>
+    <span class="chip ok gold-only">verdict matches expert(s)</span>
+    <span class="chip bad gold-only">verdict differs from expert(s)</span>
+    <span class="chip mix gold-only">experts disagree / gemma=unknown</span>
+    <span class="chip muted gold-only">no expert label</span>
+    <span class="sep gold-only">•</span>
+    <span class="chip gold-only">expert pills: <code>E1:Y✓</code> = expert_01 said Yes (matches gemma), <code>E1:Y✗</code> = differs</span>
   </div>
   <div class="gallery" id="gallery"></div>
 
@@ -191,25 +192,7 @@ async function login(){
 }
 
 function applyFeatureFlagsToChrome(){
-  // Hide the gold-comparison legend chips when expert gold is disabled.
-  if(!features.expert_gold_enabled){
-    const legend = document.getElementById("legendBar");
-    if(legend){
-      legend.querySelectorAll(".chip").forEach(chip => {
-        const t = chip.textContent || "";
-        if(t.includes("matches expert") || t.includes("differs from expert") ||
-           t.includes("experts disagree") || t.includes("no expert label") ||
-           t.includes("expert pills")){
-          chip.style.display = "none";
-        }
-      });
-      legend.querySelectorAll(".sep").forEach(s => s.style.display = "none");
-    }
-    // Also collapse the 5th column (gold pills) on .verdict grid rows.
-    const css = document.createElement("style");
-    css.textContent = ".verdict { grid-template-columns: 130px 80px 80px 1fr !important; }";
-    document.head.appendChild(css);
-  }
+  document.body.classList.toggle("no-gold", !features.expert_gold_enabled);
 }
 
 async function init(){
@@ -304,7 +287,11 @@ function renderImage(){
 
 $("overlayToggle").addEventListener("change", () => { if(current) renderImage(); });
 
-function dirtyOn(){ dirty = true; $("savedTag").classList.remove("show"); }
+function dirtyOn(){
+  if(dirty) return;
+  dirty = true;
+  $("savedTag").classList.remove("show");
+}
 
 function tag(name, attrs={}, children=""){
   const e = document.createElement(name);
@@ -369,13 +356,13 @@ function renderForm(){
   fp.appendChild(tag("h2", {}, "Secondary Entities"));
   const seWrap = tag("div", {id:"seWrap"});
   fp.appendChild(seWrap);
-  (sg.secondary_entities||[]).forEach((e, i) => seWrap.appendChild(entityRow(e, i)));
+  (sg.secondary_entities||[]).forEach((e, i) => seWrap.appendChild(entityRow(e)));
   const addEnt = tag("button", {class:"add"}, "+ Add entity");
   addEnt.addEventListener("click", () => {
     sg.secondary_entities = sg.secondary_entities || [];
     const i = sg.secondary_entities.length;
     sg.secondary_entities.push({id:`e${i+1}`, type:"object", count:1, relation:"", attrs:{}});
-    seWrap.appendChild(entityRow(sg.secondary_entities[i], i));
+    seWrap.appendChild(entityRow(sg.secondary_entities[i]));
     dirtyOn();
   });
   fp.appendChild(addEnt);
@@ -384,13 +371,13 @@ function renderForm(){
   fp.appendChild(tag("h2", {}, "Relations"));
   const rWrap = tag("div", {id:"rWrap"});
   fp.appendChild(rWrap);
-  (sg.relations||[]).forEach((r, i) => rWrap.appendChild(relationRow(r, i)));
+  (sg.relations||[]).forEach((r, i) => rWrap.appendChild(relationRow(r)));
   const addRel = tag("button", {class:"add"}, "+ Add relation");
   addRel.addEventListener("click", () => {
     sg.relations = sg.relations || [];
     const i = sg.relations.length;
     sg.relations.push({from:"primary", rel:"", to:""});
-    rWrap.appendChild(relationRow(sg.relations[i], i));
+    rWrap.appendChild(relationRow(sg.relations[i]));
     dirtyOn();
   });
   fp.appendChild(addRel);
@@ -407,8 +394,15 @@ function rowField(label, kind, value, opts={}){
   }
   if(opts.readonly){ inp.readOnly = true; }
   if(opts.path){
-    inp.addEventListener("input",  () => { setPath(current, opts.path, opts.isArray ? inp.value.split("\n").map(s=>s.trim()).filter(Boolean) : (kind==="number"?Number(inp.value)||0:inp.value)); dirtyOn(); });
-    inp.addEventListener("change", () => { setPath(current, opts.path, opts.isArray ? inp.value.split("\n").map(s=>s.trim()).filter(Boolean) : (kind==="number"?Number(inp.value)||0:inp.value)); dirtyOn(); });
+    const update = () => {
+      const v = opts.isArray
+        ? inp.value.split("\n").map(s => s.trim()).filter(Boolean)
+        : (kind === "number" ? Number(inp.value) || 0 : inp.value);
+      setPath(current, opts.path, v);
+      dirtyOn();
+    };
+    inp.addEventListener("input",  update);
+    inp.addEventListener("change", update);
   }
   return tag("div", {class:"row"}, [tag("div",{class:"lbl"},label), inp]);
 }
@@ -484,7 +478,7 @@ function recolorVerdictRow(name){
   if(row)   applyRowTint(row, goldEntries, v.verdict);
 }
 
-function entityRow(e, i){
+function entityRow(e){
   const grid = tag("div", {class:"grid"});
   const id = tag("input", {type:"text", value:e.id||""});
   id.addEventListener("input", () => { e.id = id.value; dirtyOn(); });
@@ -507,16 +501,16 @@ function entityRow(e, i){
   });
 
   const rm = tag("button", {class:"rm danger"}, "× remove");
+  const r = tag("div", {class:"array-row"}, [grid, tag("div",{class:"lbl"},"attrs (JSON)"), attrs, rm]);
   rm.addEventListener("click", () => {
     current.secondary_entities.splice(current.secondary_entities.indexOf(e), 1);
-    renderForm(); dirtyOn();
+    r.remove();
+    dirtyOn();
   });
-
-  const r = tag("div", {class:"array-row"}, [grid, tag("div",{class:"lbl"},"attrs (JSON)"), attrs, rm]);
   return r;
 }
 
-function relationRow(rel, i){
+function relationRow(rel){
   const grid = tag("div", {class:"grid"});
   const f = tag("input", {type:"text", value:rel.from||""});
   const k = tag("input", {type:"text", value:rel.rel||""});
@@ -528,11 +522,13 @@ function relationRow(rel, i){
   grid.appendChild(tag("div",{},`<span class="lbl">rel</span>`));  grid.appendChild(k);
   grid.appendChild(tag("div",{},`<span class="lbl">to</span>`));    grid.appendChild(t);
   const rm = tag("button", {class:"rm danger"}, "× remove");
+  const r = tag("div", {class:"array-row"}, [grid, rm]);
   rm.addEventListener("click", () => {
     current.relations.splice(current.relations.indexOf(rel), 1);
-    renderForm(); dirtyOn();
+    r.remove();
+    dirtyOn();
   });
-  return tag("div", {class:"array-row"}, [grid, rm]);
+  return r;
 }
 
 function setPath(obj, path, value){

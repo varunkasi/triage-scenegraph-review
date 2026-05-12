@@ -10,7 +10,8 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, jsonify, request, send_file, send_from_directory, make_response
+from datetime import datetime
+from flask import Flask, Response, jsonify, request, send_file, send_from_directory, make_response
 from PIL import Image
 
 ROOT = Path(__file__).parent
@@ -53,18 +54,34 @@ SHORT_KEY_TO_QFOLDER = {
 }
 
 
-def _probe_expert_gold() -> bool:
-    """Returns True iff GOLD_BASE is set AND has at least one q*/gold_labels_expert_*.json file."""
+def _load_expert_gold() -> tuple[bool, dict]:
+    """Walk GOLD_BASE at startup. Return (enabled, lookup) where lookup is
+    {image_basename: {short_key: {expert_id: value}}}, ready for O(1) reads
+    by /api/gold/<image_id>. Empty lookup means the feature is disabled.
+    """
+    lookup: dict[str, dict[str, dict[str, str]]] = {}
     if GOLD_BASE is None or not GOLD_BASE.is_dir():
-        return False
-    for qfolder in SHORT_KEY_TO_QFOLDER.values():
+        return False, lookup
+    for sk, qfolder in SHORT_KEY_TO_QFOLDER.items():
         qdir = GOLD_BASE / qfolder
-        if qdir.is_dir() and any(qdir.glob("gold_labels_expert_*.json")):
-            return True
-    return False
+        if not qdir.is_dir():
+            continue
+        for gp in qdir.glob("gold_labels_expert_*.json"):
+            try:
+                d = json.loads(gp.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            eid = d.get("expert_id") or gp.stem.removeprefix("gold_labels_")
+            for ipath, val in (d.get("labels") or {}).items():
+                if val is None:
+                    continue
+                # ipath looks like "images/foo.jpg"; key the lookup by basename.
+                basename = ipath.rsplit("/", 1)[-1]
+                lookup.setdefault(basename, {}).setdefault(sk, {})[eid] = val
+    return bool(lookup), lookup
 
 
-EXPERT_GOLD_ENABLED = _probe_expert_gold()
+EXPERT_GOLD_ENABLED, _GOLD_LOOKUP = _load_expert_gold()
 
 
 ACCESS_CODE = os.environ.get("ACCESS_CODE", "changeMe")
@@ -113,8 +130,8 @@ def api_auth():
 @app.get("/api/list")
 @require_auth
 def api_list():
-    """Cleaner list endpoint."""
-    sg_stems = set(p.name.removesuffix(".json") for p in SG_DIR.glob("*.jpg.json"))
+    """List all images on disk with a flag for which have a scenegraph."""
+    sg_stems = {p.stem for p in SG_DIR.glob("*.jpg.json")}
     items = []
     for img_path in sorted(IMAGES_DIR.glob("*.jpg")):
         items.append({
@@ -172,21 +189,43 @@ def api_image(image_id):
     p = IMAGES_DIR / image_id
     if not p.exists():
         return jsonify({"error": "not_found"}), 404
-    return send_file(p, mimetype="image/jpeg")
+    resp = make_response(send_file(p, mimetype="image/jpeg"))
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
+def _ensure_thumb(src: Path) -> Path | None:
+    """Return path to the (possibly just-generated) thumb for src, or None if src missing."""
+    if not src.exists():
+        return None
+    dst = THUMB_DIR / src.name
+    if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
+        with Image.open(src) as im:
+            im.thumbnail((240, 160))
+            im.save(dst, "JPEG", quality=80)
+    return dst
+
+
+def _prebuild_thumbs() -> int:
+    """Generate any missing thumbs once at startup. Returns count generated."""
+    n = 0
+    for img in IMAGES_DIR.glob("*.jpg"):
+        before = (THUMB_DIR / img.name).exists()
+        _ensure_thumb(img)
+        if not before:
+            n += 1
+    return n
 
 
 @app.get("/api/thumb/<image_id>")
 @require_auth
 def api_thumb(image_id):
-    src = IMAGES_DIR / image_id
-    if not src.exists():
+    dst = _ensure_thumb(IMAGES_DIR / image_id)
+    if dst is None:
         return jsonify({"error": "not_found"}), 404
-    dst = THUMB_DIR / image_id
-    if not dst.exists() or dst.stat().st_mtime < src.stat().st_mtime:
-        with Image.open(src) as im:
-            im.thumbnail((240, 160))
-            im.save(dst, "JPEG", quality=80)
-    return send_file(dst, mimetype="image/jpeg")
+    resp = make_response(send_file(dst, mimetype="image/jpeg"))
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
 
 
 
@@ -196,27 +235,12 @@ def api_gold(image_id):
     """Return per-question gold labels (all experts) for the given image.
 
     Output shape:  {short_key: {expert_id: "Yes"|"No", ...}, ...}
-    Returns all empty per-expert dicts when EXPERT_GOLD_ENABLED is False.
+    Served from the in-memory _GOLD_LOOKUP populated once at startup;
+    returns empty per-key dicts when the feature is disabled or the image
+    has no entries.
     """
-    if not EXPERT_GOLD_ENABLED:
-        return jsonify({sk: {} for sk in SHORT_KEY_TO_QFOLDER})
-    img_key = f"images/{image_id}"
-    out = {}
-    for sk, qfolder in SHORT_KEY_TO_QFOLDER.items():
-        per_expert = {}
-        qdir = GOLD_BASE / qfolder
-        if qdir.is_dir():
-            for gp in qdir.glob("gold_labels_expert_*.json"):
-                try:
-                    d = json.load(open(gp))
-                    eid = d.get("expert_id") or gp.stem.removeprefix("gold_labels_")
-                    val = d.get("labels", {}).get(img_key)
-                    if val is not None:
-                        per_expert[eid] = val
-                except Exception:
-                    continue
-        out[sk] = per_expert
-    return jsonify(out)
+    per_image = _GOLD_LOOKUP.get(image_id, {}) if EXPERT_GOLD_ENABLED else {}
+    return jsonify({sk: per_image.get(sk, {}) for sk in SHORT_KEY_TO_QFOLDER})
 
 
 
@@ -228,14 +252,11 @@ def api_download_all():
     Reflects on-disk saved state at the moment of the request. Any in-flight
     UI edits that haven't been Save'd are NOT included.
     """
-    from datetime import datetime
-    from flask import Response
-
     def gen():
         for p in sorted(SG_DIR.glob("*.jpg.json")):
             try:
-                d = json.load(open(p))
-            except Exception:
+                d = json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
                 continue
             d.pop("_diagnostics", None)
             yield json.dumps(d) + "\n"
@@ -276,6 +297,9 @@ def main():
     print(f"  scenegraphs dir: {SG_DIR}  ({len(list_image_ids())} files)")
     print(f"  images dir:      {IMAGES_DIR}  ({len(all_image_ids_on_disk())} files)")
     print(f"  expert gold:     {'ENABLED (' + str(GOLD_BASE) + ')' if EXPERT_GOLD_ENABLED else 'disabled'}")
+    n_thumbs = _prebuild_thumbs()
+    if n_thumbs:
+        print(f"  thumbs:          generated {n_thumbs} missing thumbnails at startup")
     app.run(host=args.host, port=args.port, debug=False)
 
 
