@@ -92,9 +92,11 @@ d["secondary_entities"].append({
 })
 print(json.dumps(d))
 ')
-HTTP=$(curl -s -o /dev/null -w "%{http_code}" -b $JAR -X PUT "$BASE/api/sg/$ID" \
+RESP=$(curl -s -b $JAR -X PUT "$BASE/api/sg/$ID" \
     -H "Content-Type: application/json" -d "$MOD")
-[[ "$HTTP" == "200" ]] && pass "PUT (add) → 200" || fail "expected 200, got $HTTP"
+BAK_ADD=$(echo "$RESP" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("backup",""))')
+echo "$RESP" | python3 -c 'import sys,json;sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' \
+    && pass "PUT (add) → ok=true (backup: $BAK_ADD)" || fail "PUT (add) returned non-ok"
 
 # verify it round-trips
 GOT_TAG=$(curl -fs -b $JAR "$BASE/api/sg/$ID" | python3 -c '
@@ -105,9 +107,11 @@ print(any(e.get("id") == "smoke_test_entity" for e in d["secondary_entities"]))
 [[ "$GOT_TAG" == "True" ]] && pass "PUT round-trip: marker entity persisted" || fail "marker not in GET"
 
 # restore
-HTTP=$(curl -s -o /dev/null -w "%{http_code}" -b $JAR -X PUT "$BASE/api/sg/$ID" \
+RESP=$(curl -s -b $JAR -X PUT "$BASE/api/sg/$ID" \
     -H "Content-Type: application/json" -d "$ORIG")
-[[ "$HTTP" == "200" ]] && pass "PUT (restore) → 200" || fail "restore failed"
+BAK_RESTORE=$(echo "$RESP" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("backup",""))')
+echo "$RESP" | python3 -c 'import sys,json;sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' \
+    && pass "PUT (restore) → ok=true (backup: $BAK_RESTORE)" || fail "restore failed"
 LEFT=$(curl -fs -b $JAR "$BASE/api/sg/$ID" | python3 -c '
 import sys, json
 d = json.load(sys.stdin)
@@ -146,3 +150,9 @@ HTTP=$(curl -s -o /dev/null -w "%{http_code}" "$BASE/api/list")
 
 echo
 echo "=== all checks passed ==="
+echo
+echo "Note: this run created 2 backup files in data/backups/ on the server."
+echo "To delete them (if you have shell access on the host):"
+echo "  rm -f data/backups/$BAK_ADD data/backups/$BAK_RESTORE"
+echo "Or to wipe all backups created today:"
+echo "  rm -f data/backups/*$(date +%Y%m%d)*"
