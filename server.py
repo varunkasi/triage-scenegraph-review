@@ -1,4 +1,4 @@
-"""scenegraph-review server for vlm-image-review:5590."""
+"""scenegraph-review server."""
 from __future__ import annotations
 import argparse
 import json
@@ -272,7 +272,7 @@ def main():
     ap.add_argument("--port", type=int, default=5590)
     ap.add_argument("--host", default="0.0.0.0")
     args = ap.parse_args()
-    print(f"scenegraph-review serving on {args.host}:{args.port} (access code: {'(env)' if os.environ.get('ACCESS_CODE') else 'sgreview2026'})")
+    print(f"scenegraph-review serving on {args.host}:{args.port} (access code: {'(env)' if os.environ.get('ACCESS_CODE') else 'changeMe'})")
     print(f"  scenegraphs dir: {SG_DIR}  ({len(list_image_ids())} files)")
     print(f"  images dir:      {IMAGES_DIR}  ({len(all_image_ids_on_disk())} files)")
     print(f"  expert gold:     {'ENABLED (' + str(GOLD_BASE) + ')' if EXPERT_GOLD_ENABLED else 'disabled'}")

@@ -26,7 +26,7 @@ COPY server.py /app/server.py
 COPY templates /app/templates
 
 # Default port + access code (override at runtime with -e ACCESS_CODE=... -p ...).
-ENV ACCESS_CODE=sgreview2026
+ENV ACCESS_CODE=changeMe
 EXPOSE 5590
 
 USER app
